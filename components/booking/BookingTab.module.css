@@ -1,0 +1,771 @@
+.bookingTopGrid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-bottom: 14px;
+}
+
+.bookingPanel,
+.bookingCalendarCard {
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 16px;
+    box-shadow: 0 8px 20px rgba(15, 23, 42, 0.05);
+}
+
+.bookingPanel {
+    min-height: 220px;
+    max-height: 360px;
+    overflow-y: auto;
+    padding: 14px;
+}
+
+.bookingCalendarCard {
+    padding: 14px;
+    margin-bottom: 16px;
+}
+
+.bookingPanelHead {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    align-items: flex-start;
+    margin-bottom: 8px;
+}
+
+.bookingPanelActions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.bookingTitle {
+    font-size: 15px;
+    font-weight: 950;
+    color: #111827;
+}
+
+.bookingSubtitle {
+    color: #6b7280;
+    font-size: 11px;
+}
+
+.bookingCount {
+    min-width: 30px;
+    height: 30px;
+    border-radius: 999px;
+    background: #2563eb;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 950;
+}
+
+.bookingEmpty,
+.bookingNoShowings,
+.dayLeadEmpty {
+    color: #9ca3af;
+    font-size: 11px;
+}
+
+.bookingMiniList {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.bookingMiniRow,
+.bookingMiniRowWithAction {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid #f1f5f9;
+}
+
+.bookingMiniTitle {
+    font-weight: 900;
+    font-size: 12px;
+    color: #111827;
+}
+
+.bookingMiniSub,
+.bookingMiniMeta {
+    color: #6b7280;
+    font-size: 11px;
+}
+
+.bookingMiniMeta {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 3px;
+    text-align: right;
+}
+
+.bookingMiniMeta strong {
+    color: #111827;
+}
+
+.sectionHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    margin: 4px 0 10px;
+}
+
+.sectionTitle {
+    font-size: 15px;
+    font-weight: 950;
+    color: #111827;
+}
+
+.sectionSubtitle {
+    color: #6b7280;
+    font-size: 11px;
+}
+
+.sectionActions {
+    display: flex;
+    gap: 7px;
+    align-items: center;
+}
+
+.smallNavButton,
+.primarySmallButton {
+    height: 34px;
+    border-radius: 9px;
+    font-weight: 900;
+    font-size: 12px;
+    cursor: pointer;
+    padding: 0 12px;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.smallNavButton {
+    border: 1px solid #d1d5db;
+    background: white;
+    color: #374151;
+}
+
+.primarySmallButton {
+    border: none;
+    background: #2563eb;
+    color: white;
+}
+
+.bookingCalendarGrid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 8px;
+}
+
+.monthWeekday {
+    color: #6b7280;
+    font-size: 10px;
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 0 4px 4px;
+}
+
+.bookingCalDay {
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    min-height: 230px;
+    padding: 8px;
+    background: #fbfdff;
+    cursor: pointer;
+}
+
+.bookingEmptyCell {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    cursor: default;
+}
+
+.bookingToday {
+    border-color: #2563eb;
+    background: #eff6ff;
+}
+
+.bookingDayHead {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.bookingDayHead span {
+    font-size: 13px;
+    color: #111827;
+}
+
+.bookingDayHead strong {
+    background: #111827;
+    color: white;
+    border-radius: 999px;
+    min-width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+}
+
+.miniButtonRow {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+
+.miniDayButtonSet,
+.miniDayButtonAdd {
+    border: none;
+    height: 22px;
+    border-radius: 7px;
+    font-size: 11px;
+    font-weight: 900;
+    cursor: pointer;
+}
+
+.miniDayButtonSet {
+    background: #dbeafe;
+    color: #1d4ed8;
+}
+
+.miniDayButtonAdd {
+    background: #dcfce7;
+    color: #15803d;
+}
+
+.scheduleListScroll {
+    min-height: 36px;
+    max-height: 82px;
+    overflow-y: auto;
+    margin-bottom: 10px;
+}
+
+.scheduleCompactWrap {
+    display: grid;
+    grid-template-columns: 1fr 24px;
+    gap: 4px;
+    align-items: center;
+    margin-bottom: 5px;
+}
+
+.scheduleCompactRow {
+    width: 100%;
+    border: none;
+    background: #f8fafc;
+    border-radius: 7px;
+    padding: 5px 6px;
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    cursor: pointer;
+    font-size: 11px;
+    color: #111827;
+}
+
+.scheduleCompactRow span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.scheduleCompactDelete {
+    border: 1px solid #fecaca;
+    background: #fff1f2;
+    color: #be123c;
+    border-radius: 7px;
+    height: 24px;
+    width: 24px;
+    font-size: 14px;
+    font-weight: 900;
+    cursor: pointer;
+}
+
+.scheduleCompactDelete:hover {
+    background: #ffe4e6;
+}
+
+.scheduleActions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.deleteScheduleButton {
+    border: 1px solid #fecaca;
+    background: #fff1f2;
+    color: #be123c;
+    border-radius: 8px;
+    height: 28px;
+    padding: 0 9px;
+    font-size: 11px;
+    font-weight: 900;
+    cursor: pointer;
+}
+
+.deleteScheduleButton:hover {
+    background: #ffe4e6;
+}
+
+.leadLogBox {
+    border-top: 1px solid #e5e7eb;
+    padding-top: 8px;
+}
+
+.leadLogTitle {
+    font-size: 10px;
+    font-weight: 950;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #374151;
+    margin-bottom: 6px;
+}
+
+.leadLogScroll {
+    max-height: 125px;
+    overflow-y: auto;
+}
+
+.leadLogRow {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 11px;
+    padding-bottom: 5px;
+    margin-bottom: 5px;
+    border-bottom: 1px solid #f1f5f9;
+}
+
+.leadLogRow span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.leadLogRow strong {
+    color: #2563eb;
+}
+
+.calendarLeadCard {
+    border-bottom: 1px solid #f1f5f9;
+    padding-bottom: 6px;
+    margin-bottom: 6px;
+}
+
+.calendarContactActions {
+    display: flex;
+    gap: 4px;
+    margin-top: 4px;
+    flex-wrap: wrap;
+}
+
+.appointmentCard {
+    border-bottom: 1px solid #f1f5f9;
+    padding: 8px 0;
+}
+
+.appointmentCardTop {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 7px;
+}
+
+.appointmentCardConfirmed {
+    border-left: 5px solid #22c55e;
+    background: #f0fdf4;
+    padding-left: 10px;
+    border-radius: 10px;
+}
+
+.appointmentCardConfirmed .bookingMiniTitle {
+    color: #166534;
+}
+
+.appointmentCardConfirmed .bookingMiniMeta strong {
+    color: #15803d;
+}
+
+.appointmentActions,
+.confirmedActions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.appointmentActions select,
+.confirmedActions select,
+.appointmentActionsCompact select {
+    border: 1px solid #d1d5db;
+    background: white;
+    border-radius: 7px;
+    height: 28px;
+    font-size: 11px;
+    font-weight: 800;
+    padding: 0 6px;
+    max-width: 150px;
+}
+
+.appointmentActionsCompact {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-top: 4px;
+}
+
+.tinyButton,
+.tinyButtonLink,
+.tinyDangerButton {
+    height: 28px;
+    border-radius: 7px;
+    font-size: 11px;
+    font-weight: 900;
+    padding: 0 8px;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.tinyButton,
+.tinyButtonLink {
+    border: 1px solid #d1d5db;
+    background: white;
+    color: #374151;
+}
+
+.tinyDangerButton {
+    border: 1px solid #fecaca;
+    background: #fff1f2;
+    color: #be123c;
+}
+
+.tinyButton:hover,
+.tinyButtonLink:hover {
+    background: #f8fafc;
+}
+
+.tinyDangerButton:hover {
+    background: #ffe4e6;
+}
+
+.errorText {
+    color: #991b1b;
+    background: #fee2e2;
+    border: 1px solid #fecaca;
+    border-radius: 9px;
+    padding: 8px;
+    font-size: 12px;
+    font-weight: 700;
+    margin-bottom: 12px;
+}
+
+.modalBackdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+    padding: 20px;
+}
+
+.modal {
+    width: min(680px, 100%);
+    max-height: 90vh;
+    overflow-y: auto;
+    background: white;
+    border-radius: 16px;
+    border: 1px solid #e5e7eb;
+    box-shadow: 0 25px 60px rgba(15, 23, 42, 0.25);
+    padding: 16px;
+}
+
+.modalHead {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: flex-start;
+    margin-bottom: 14px;
+}
+
+.modalClose {
+    border: none;
+    background: #f1f5f9;
+    color: #111827;
+    width: 30px;
+    height: 30px;
+    border-radius: 999px;
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.formLabel {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 900;
+    color: #374151;
+    margin-bottom: 10px;
+}
+
+.formLabel input,
+.formLabel select,
+.formLabel textarea,
+.searchRow input {
+    width: 100%;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    padding: 8px;
+    font-size: 12px;
+    background: white;
+    outline: none;
+}
+
+.formLabel textarea {
+    min-height: 70px;
+    resize: vertical;
+}
+
+.commonTimeGrid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.commonTimeButton {
+    border: 1px solid #d1d5db;
+    background: #f9fafb;
+    color: #374151;
+    border-radius: 999px;
+    padding: 6px 9px;
+    font-size: 11px;
+    font-weight: 900;
+    cursor: pointer;
+}
+
+.commonTimeButton:hover {
+    background: #eef2ff;
+    border-color: #c7d2fe;
+    color: #3730a3;
+}
+
+.commonTimeButtonActive {
+    background: #2563eb;
+    color: white;
+    border-color: #2563eb;
+}
+
+.commonTimeButtonActive:hover {
+    background: #2563eb;
+    color: white;
+    border-color: #2563eb;
+}
+
+.modalUtilityRow,
+.modalActions,
+.searchRow {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.searchRow input {
+    flex: 1;
+}
+
+.modalSectionTitle {
+    font-size: 10px;
+    font-weight: 950;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #6b7280;
+    margin: 10px 0 7px;
+}
+
+.modalAptList {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    max-height: 180px;
+    overflow-y: auto;
+    margin-bottom: 10px;
+}
+
+.modalAptCheck {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 8px;
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 9px;
+    font-size: 12px;
+    font-weight: 700;
+    color: #374151;
+    cursor: pointer;
+}
+
+.modalAptCheck input {
+    width: auto;
+}
+
+.foundLeadCard {
+    border: 1px solid #dbeafe;
+    background: #eff6ff;
+    border-radius: 12px;
+    padding: 10px;
+    margin-bottom: 10px;
+}
+
+.editBookingInfo {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 9px;
+    margin-bottom: 12px;
+}
+
+.editBookingInfo div {
+    border: 1px solid #e5e7eb;
+    background: #f9fafb;
+    border-radius: 10px;
+    padding: 9px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.editBookingInfo strong {
+    color: #6b7280;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.editBookingInfo span {
+    color: #111827;
+    font-size: 12px;
+    font-weight: 800;
+}
+
+@media (max-width: 1100px) {
+    .bookingTopGrid {
+        grid-template-columns: 1fr;
+    }
+
+    .bookingCalendarGrid {
+        grid-template-columns: 1fr;
+    }
+
+    .sectionHeader {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .sectionActions,
+    .modalActions,
+    .modalUtilityRow,
+    .searchRow {
+        width: 100%;
+        flex-wrap: wrap;
+    }
+
+    .smallNavButton,
+    .primarySmallButton {
+        flex: 1;
+    }
+
+    .modalAptList {
+        grid-template-columns: 1fr;
+    }
+
+    .editBookingInfo {
+        grid-template-columns: 1fr;
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+.availableSchedulesBox {
+    border: 1px solid #e5e7eb;
+    background: #fbfdff;
+    border-radius: 12px;
+    padding: 10px;
+    margin-bottom: 12px;
+}
+
+.modalSectionTitle {
+    font-size: 11px;
+    font-weight: 950;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #374151;
+    margin-bottom: 8px;
+}
+
+.availableScheduleList {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.scheduleDateDropdownRow {
+    display: grid;
+    grid-template-columns: 90px 1fr;
+    gap: 10px;
+    align-items: center;
+}
+
+.scheduleDateDropdownRow span {
+    font-size: 12px;
+    font-weight: 900;
+    color: #111827;
+}
+
+.scheduleDateDropdownRow select {
+    width: 100%;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    padding: 8px;
+    font-size: 12px;
+    background: white;
+    outline: none;
+}
+
+@media (max-width: 700px) {
+    .scheduleDateDropdownRow {
+        grid-template-columns: 1fr;
+        gap: 5px;
+    }
+}

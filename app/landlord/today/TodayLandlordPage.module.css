@@ -1,0 +1,292 @@
+.page {
+    min-height: 100vh;
+    background: #f8fafc;
+    padding: 14px;
+    color: #111827;
+}
+
+.header {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: flex-start;
+    margin-bottom: 14px;
+}
+
+.kicker {
+    color: #2563eb;
+    font-size: 11px;
+    font-weight: 950;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 4px;
+}
+
+.header h1 {
+    font-size: 28px;
+    line-height: 1.05;
+    margin: 0;
+    font-weight: 950;
+}
+
+.header p {
+    margin: 5px 0 0;
+    color: #6b7280;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.refreshButton {
+    border: 1px solid #d1d5db;
+    background: white;
+    color: #111827;
+    height: 38px;
+    border-radius: 999px;
+    padding: 0 14px;
+    font-size: 13px;
+    font-weight: 900;
+    cursor: pointer;
+}
+
+.refreshButton:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.successBox,
+.errorBox,
+.emptyBox {
+    border-radius: 14px;
+    padding: 12px;
+    font-size: 13px;
+    font-weight: 800;
+    margin-bottom: 12px;
+}
+
+.successBox {
+    background: #dcfce7;
+    border: 1px solid #86efac;
+    color: #166534;
+}
+
+.errorBox {
+    background: #fee2e2;
+    border: 1px solid #fecaca;
+    color: #991b1b;
+}
+
+.emptyBox {
+    background: white;
+    border: 1px solid #e5e7eb;
+    color: #6b7280;
+}
+
+.groupList {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.groupCard {
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 18px;
+    box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
+    overflow: hidden;
+}
+
+.groupHead {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    align-items: center;
+    padding: 14px;
+    border-bottom: 1px solid #dbeafe;
+    background: #eff6ff;
+}
+
+.groupHead h2 {
+    margin: 0;
+    font-size: 17px;
+    line-height: 1.15;
+    font-weight: 950;
+}
+
+.groupHead p {
+    margin: 5px 0 0;
+    color: #1d4ed8;
+    font-size: 14px;
+    font-weight: 950;
+}
+
+.groupHead span {
+    min-width: 34px;
+    height: 34px;
+    border-radius: 999px;
+    background: #2563eb;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    font-weight: 950;
+}
+
+.leadList {
+    display: flex;
+    flex-direction: column;
+}
+
+.leadRow {
+    display: grid;
+    grid-template-columns: minmax(150px, 220px) 1fr;
+    gap: 12px;
+    align-items: center;
+    padding: 14px;
+    border-bottom: 1px solid #f1f5f9;
+}
+
+.leadRow:last-child {
+    border-bottom: none;
+}
+
+.leadMain {
+    min-width: 0;
+}
+
+.leadName {
+    font-size: 18px;
+    line-height: 1.15;
+    font-weight: 950;
+    color: #111827;
+    margin-bottom: 4px;
+}
+
+.leadPhone {
+    color: #6b7280;
+    font-size: 13px;
+    font-weight: 800;
+    margin-bottom: 8px;
+}
+
+.statusBadge {
+    display: inline-flex;
+    align-items: center;
+    width: fit-content;
+    border-radius: 999px;
+    padding: 6px 12px;
+    background: #111827;
+    color: white;
+    font-size: 13px;
+    font-weight: 950;
+    letter-spacing: 0.02em;
+}
+
+.leadControls {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    min-width: 0;
+}
+
+.quickLinks {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 7px;
+}
+
+.quickLinks a {
+    height: 30px;
+    border-radius: 9px;
+    border: 1px solid #d1d5db;
+    background: white;
+    color: #111827;
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 950;
+}
+
+.buttonGrid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 7px;
+}
+
+.statusButton {
+    border: none;
+    border-radius: 10px;
+    min-height: 34px;
+    padding: 6px 8px;
+    font-size: 12px;
+    font-weight: 950;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.statusButton:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.attendedButton {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.cancelledButton {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.rescheduledButton {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.noShowButton {
+    background: #e5e7eb;
+    color: #374151;
+}
+
+@media (max-width: 640px) {
+    .page {
+        padding: 12px;
+    }
+
+    .leadRow {
+        grid-template-columns: 1fr;
+        gap: 10px;
+        align-items: stretch;
+    }
+
+    .leadName {
+        font-size: 18px;
+    }
+
+    .statusBadge {
+        font-size: 13px;
+        padding: 6px 12px;
+    }
+
+    .buttonGrid {
+        grid-template-columns: repeat(4, 1fr);
+        gap: 6px;
+    }
+
+    .statusButton {
+        min-height: 34px;
+        font-size: 11px;
+        padding: 5px 6px;
+    }
+}
+
+@media (min-width: 720px) {
+    .page {
+        max-width: 860px;
+        margin: 0 auto;
+        padding: 22px;
+    }
+}
