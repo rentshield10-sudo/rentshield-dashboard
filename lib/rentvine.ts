@@ -155,3 +155,158 @@ export async function fetchRentvineRenewals(): Promise<RenewalRow[]> {
 
   return [...renewalRows, ...expiringRows];
 }
+
+// ---------------------------------------------------------------------------
+// Full apartment/lease inventory (Phase 2 — "Fetch All Apartments")
+// ---------------------------------------------------------------------------
+
+export interface ApartmentDetailRow {
+  address: string;
+  unit: string;
+  tenantName: string;
+  activation1: string;
+  expiration1: string;
+  activation2: string;
+  expiration2: string;
+  currentRent: string;
+  securityDeposit: string;
+  notes: string;
+  rentvineLeaseId: string;
+  rentvineUnitId: string;
+  rentvineLeaseRenewalId: string;
+}
+
+const APARTMENT_FETCH_MAX_PAGES = 50;
+
+async function fetchAllLeasesPaginated(
+  baseUrl: string,
+  auth: string,
+): Promise<Record<string, unknown>[]> {
+  const allLeases: Record<string, unknown>[] = [];
+  let page = 1;
+
+  while (page <= APARTMENT_FETCH_MAX_PAGES) {
+    const pageData = (await rentvineGet(baseUrl, `/leases?page=${page}&per-page=25`, auth)) as unknown;
+    const pageLeases = Array.isArray(pageData) ? (pageData as Record<string, unknown>[]) : [];
+    if (pageLeases.length === 0) break;
+    allLeases.push(...pageLeases);
+    page += 1;
+  }
+
+  return allLeases;
+}
+
+export async function fetchAllApartmentDetails(): Promise<ApartmentDetailRow[]> {
+  const accountCode = process.env.RENTVINE_ACC_CODE;
+  const apiKey = process.env.RENTVINE_ACC_KEY;
+  const apiSecret = process.env.RENTVINE_ACC_SECRET;
+
+  const missing = [
+    !accountCode && "RENTVINE_ACC_CODE",
+    !apiKey && "RENTVINE_ACC_KEY",
+    !apiSecret && "RENTVINE_ACC_SECRET",
+  ].filter(Boolean);
+
+  if (missing.length > 0) {
+    throw new Error(`Missing env vars: ${missing.join(", ")}`);
+  }
+
+  const auth = getBasicAuth(apiKey!, apiSecret!);
+  const baseUrl = `https://${normalizeHost(accountCode!)}/api/manager`;
+
+  const [allLeases, renewalsData] = await Promise.all([
+    fetchAllLeasesPaginated(baseUrl, auth),
+    rentvineGet(baseUrl, "/leases/renewals?per-page=100", auth),
+  ]);
+
+  const formalRenewals = (
+    Array.isArray((renewalsData as Record<string, unknown>)?.data)
+      ? (renewalsData as Record<string, unknown>).data
+      : Array.isArray(renewalsData)
+        ? renewalsData
+        : []
+  ) as Record<string, unknown>[];
+
+  const renewalByLeaseId = new Map<string, Record<string, unknown>>();
+  for (const r of formalRenewals) {
+    const lease = r.lease as Record<string, unknown>;
+    const renewal = r.renewal as Record<string, unknown>;
+    const leaseId = String(lease?.leaseID ?? "");
+    if (leaseId) renewalByLeaseId.set(leaseId, renewal);
+  }
+
+  return allLeases.map((item) => {
+    const lease = item.lease as Record<string, unknown>;
+    const unit = item.unit as Record<string, unknown>;
+    const leaseId = String(lease?.leaseID ?? "");
+    const renewal = renewalByLeaseId.get(leaseId);
+
+    return {
+      address: String(unit?.address ?? ""),
+      unit: String(unit?.address2 ?? ""),
+      tenantName: ((lease?.tenants as string[]) ?? []).join(", "),
+      activation1: String(renewal?.previousStartDate ?? lease?.startDate ?? ""),
+      expiration1: String(renewal?.previousEndDate ?? lease?.endDate ?? ""),
+      activation2: String(renewal?.startDate ?? ""),
+      expiration2: String(renewal?.endDate ?? ""),
+      currentRent: String(unit?.rent ?? ""),
+      securityDeposit: String(unit?.deposit ?? ""),
+      notes: String(unit?.leaseNotes ?? ""),
+      rentvineLeaseId: leaseId,
+      rentvineUnitId: String(unit?.unitID ?? ""),
+      rentvineLeaseRenewalId: String(renewal?.leaseRenewalID ?? ""),
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Rentvine renewal-date write (Phase 2 — "Save to Rentvine")
+// ---------------------------------------------------------------------------
+
+export async function updateRentvineLeaseRenewalDates(
+  leaseRenewalId: string,
+  dates: { startDate: string; endDate: string },
+): Promise<unknown> {
+  const accountCode = process.env.RENTVINE_ACC_CODE;
+  const apiKey = process.env.RENTVINE_ACC_KEY;
+  const apiSecret = process.env.RENTVINE_ACC_SECRET;
+
+  const missing = [
+    !accountCode && "RENTVINE_ACC_CODE",
+    !apiKey && "RENTVINE_ACC_KEY",
+    !apiSecret && "RENTVINE_ACC_SECRET",
+  ].filter(Boolean);
+
+  if (missing.length > 0) {
+    throw new Error(`Missing env vars: ${missing.join(", ")}`);
+  }
+
+  const auth = getBasicAuth(apiKey!, apiSecret!);
+  const baseUrl = `https://${normalizeHost(accountCode!)}/api/manager`;
+
+  const res = await fetch(`${baseUrl}/leases/renewals/${leaseRenewalId}`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Basic ${auth}`,
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(dates),
+  });
+
+  const text = await res.text();
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    json = { raw: text };
+  }
+
+  if (!res.ok) {
+    throw new Error(
+      `Rentvine PATCH /leases/renewals/${leaseRenewalId} → ${res.status} ${res.statusText}: ${text}`,
+    );
+  }
+
+  return json;
+}
