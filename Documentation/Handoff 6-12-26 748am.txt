@@ -1,0 +1,1115 @@
+# RentShield / Mission Control Pipeline + Booking Update Handoff
+
+_Last updated from the current implementation session._
+
+## 1. High-Level Goal
+
+We implemented a simple lead pipeline/tagging system inside the Mission Control dashboard.
+
+The goal is:
+
+1. Zillow lead scraper collects rental leads.
+2. Leads land in Google Sheets and/or Supabase.
+3. n8n processes new rows and triggers outbound automation.
+4. Mission Control dashboard displays lead status, bookings, and follow-up pools.
+5. Booking tab can add showing appointments.
+6. When a booking is created or updated, the matching lead pipeline status should update in Supabase.
+7. Leads tab reads Supabase and shows the updated pipeline state.
+
+The important design decision: this is a **simple pipeline status system**, not a complex job/event/audit system.
+
+---
+
+## 2. Current System Architecture
+
+### A. Zillow Scraper Chrome Extension
+
+Purpose:
+
+- Scrapes leads from Zillow inbox/messages.
+- Writes lead data into a Google Sheet.
+- Used as the first capture point for rental inquiries.
+
+Flow:
+
+```text
+Zillow Inbox
+→ Chrome Extension Scraper
+→ Google Sheets row
+```
+
+Typical data:
+
+```text
+Lead name
+Phone number
+Apartment/property address
+Inbound message/content
+Created timestamp
+Source
+```
+
+---
+
+### B. Google Sheets
+
+Purpose:
+
+- Initial staging area for scraped leads.
+- n8n watches the sheet for new rows.
+
+Flow:
+
+```text
+Google Sheets new row
+→ n8n workflow trigger
+```
+
+---
+
+### C. n8n Workflow Server
+
+Purpose:
+
+- Watches Google Sheet rows.
+- Starts automation workflow.
+- Updates Supabase lead tables.
+- Calls QuoSender / web-auto-click server to send SMS.
+- Writes results/statuses back to Supabase and/or Google Sheets.
+
+Expected n8n flow:
+
+```text
+Google Sheets trigger
+→ Normalize lead data
+→ Upsert/update Supabase
+→ Choose/send SMS template
+→ Call QuoSender or web-auto-click endpoint
+→ Update Supabase + Google Sheet with outbound status
+```
+
+Important current stages from automation:
+
+```text
+new_lead
+contacted
+requirements_sent
+schedule_sent
+```
+
+---
+
+### D. Supabase
+
+Purpose:
+
+- Main database for Mission Control dashboard.
+- Stores dashboard lead rows, cleaned view, showing schedules, and appointments.
+- Mission Control reads from Supabase.
+- Booking tab writes booking records and updates pipeline status.
+
+Important Supabase tables/views currently involved:
+
+```text
+public.dashboard_leads
+public.dashboard_leads_clean
+public.dashboard_showing_schedules
+public.dashboard_showing_appointments
+```
+
+There may also be older/core tables such as:
+
+```text
+public.leads
+```
+
+But the Mission Control Leads tab currently reads from:
+
+```text
+public.dashboard_leads_clean
+```
+
+And `dashboard_leads_clean` is a view over:
+
+```text
+public.dashboard_leads
+```
+
+So for this dashboard feature, updates should target:
+
+```text
+public.dashboard_leads
+```
+
+not the older `leads` table unless intentionally syncing later.
+
+---
+
+### E. QuoSender App
+
+Purpose:
+
+- Existing manual/queued SMS workstation.
+- Template builder.
+- Can receive copied lead rows from Mission Control Leads tab.
+- Handles manual or queue-based sending through Quo.
+
+Current relationship:
+
+```text
+Mission Control Leads tab
+→ select/filter leads
+→ Copy for QuoSender
+→ paste into QuoSender
+→ send/queue SMS
+```
+
+Future goal:
+
+- Move the useful template builder/send controls from QuoSender into Mission Control later.
+- For now, QuoSender remains separate.
+
+---
+
+### F. Web Auto-Click / Quo Sending Server
+
+Purpose:
+
+- Node/server component that automates sending through Quo or a browser/web endpoint.
+- n8n or QuoSender calls this service.
+- Mission Control may later call the same endpoint directly.
+
+Expected future flow:
+
+```text
+Mission Control selected leads
+→ choose SMS template
+→ call QuoSender/web-auto-click endpoint
+→ update Supabase pipeline_status
+```
+
+---
+
+### G. Mission Control Dashboard
+
+Current app structure observed:
+
+```text
+app/page.tsx
+app/page.module.css
+components/booking/BookingTab.tsx
+components/booking/BookingTab.module.css
+components/booking/ScheduleTemplatesModal.tsx
+components/leads/LeadsTab.tsx
+components/leads/LeadsTab.module.css
+lib/supabase.ts
+```
+
+Mission Control sidebar currently includes:
+
+```text
+Home
+Leads
+Human Review
+Booking
+```
+
+Current dashboard ownership:
+
+- `Home`: overview/dashboard filters.
+- `Leads`: pipeline status, follow-up pool, selectable leads for QuoSender.
+- `Human Review`: review/exception rows.
+- `Booking`: schedules and showing appointments.
+
+---
+
+## 3. Pipeline Statuses Implemented
+
+The current simple pipeline statuses are:
+
+```text
+new_lead
+contacted
+requirements_sent
+schedule_sent
+booked
+confirmed
+showed
+no_show
+reschedule_needed
+cancelled
+nurture
+lost
+```
+
+### Meaning
+
+| Status | Meaning |
+|---|---|
+| `new_lead` | Lead exists but no intro/outbound action yet. |
+| `contacted` | Intro SMS/contact message sent. |
+| `requirements_sent` | Requirements/request info message sent. |
+| `schedule_sent` | Schedule/showing availability sent. |
+| `booked` | Showing appointment created. |
+| `confirmed` | Appointment confirmed. |
+| `showed` | Lead attended the showing. |
+| `no_show` | Lead booked/confirmed but did not attend. |
+| `reschedule_needed` | Lead needs another showing time. |
+| `cancelled` | Appointment cancelled and not clearly rescheduling. |
+| `nurture` | Lead should be followed up later. |
+| `lost` | Dead lead, wrong number, duplicate, not interested, stop, or unqualified. |
+
+### Happy Path Shown in Top Progress Bar
+
+The Leads tab top pipeline progress line shows only the main happy path:
+
+```text
+New Lead → Contacted → Requirements Sent → Schedule Sent → Booked → Confirmed → Showed
+```
+
+Side statuses are not part of the straight progress line:
+
+```text
+No Show
+Reschedule Needed
+Cancelled
+Nurture
+Lost
+```
+
+Those should display as the current/special status when selected.
+
+---
+
+## 4. Supabase Changes Made
+
+### A. Added `pipeline_status` to `dashboard_leads`
+
+SQL used:
+
+```sql
+alter table public.dashboard_leads
+add column if not exists pipeline_status text not null default 'new_lead';
+```
+
+### B. Added allowed-value check constraint
+
+SQL used:
+
+```sql
+alter table public.dashboard_leads
+drop constraint if exists dashboard_leads_pipeline_status_check;
+
+alter table public.dashboard_leads
+add constraint dashboard_leads_pipeline_status_check
+check (
+  pipeline_status in (
+    'new_lead',
+    'contacted',
+    'requirements_sent',
+    'schedule_sent',
+    'booked',
+    'confirmed',
+    'showed',
+    'no_show',
+    'reschedule_needed',
+    'cancelled',
+    'nurture',
+    'lost'
+  )
+);
+```
+
+### C. Updated `dashboard_leads_clean` view
+
+Important note:
+
+Postgres does not allow inserting a new view column in the middle of an existing view using `create or replace view` if it changes the order/name mapping. So `pipeline_status` was added at the end of the view.
+
+SQL pattern:
+
+```sql
+create or replace view public.dashboard_leads_clean as
+select
+  lead_id,
+  created_at,
+  lead_name,
+  phone,
+  apt_address,
+  source,
+  current_status,
+  conversation_stage,
+  last_inbound_sms,
+  last_inbound_at,
+  last_outbound_sms,
+  last_outbound_at,
+  selected_slot,
+  needs_human_review,
+  stop_automation,
+  notes,
+  case
+    when created_at is null or trim(both from created_at) = '' then null::timestamp with time zone
+    else created_at::timestamp with time zone
+  end as created_at_ts,
+  case
+    when last_inbound_at is null or trim(both from last_inbound_at) = '' then null::timestamp with time zone
+    else last_inbound_at::timestamp with time zone
+  end as last_inbound_at_ts,
+  case
+    when last_outbound_at is null or trim(both from last_outbound_at) = '' then null::timestamp with time zone
+    else last_outbound_at::timestamp with time zone
+  end as last_outbound_at_ts,
+  case
+    when lower(coalesce(needs_human_review, '')) = any (array['true', 'yes', '1']) then true
+    else false
+  end as needs_human_review_bool,
+  case
+    when lower(coalesce(stop_automation, '')) = any (array['true', 'yes', '1']) then true
+    else false
+  end as stop_automation_bool,
+  pipeline_status
+from public.dashboard_leads;
+```
+
+### D. Verify `pipeline_status` from view
+
+```sql
+select
+  lead_id,
+  lead_name,
+  phone,
+  apt_address,
+  pipeline_status
+from public.dashboard_leads_clean
+limit 10;
+```
+
+---
+
+## 5. RPC Function Added
+
+Browser/client-side `.update()` to `dashboard_leads` was not reliably updating `pipeline_status` from the Booking tab. The booking insert into `dashboard_showing_appointments` worked, but `dashboard_leads.pipeline_status` stayed `new_lead`.
+
+To fix this, we added a Supabase RPC function with `security definer`.
+
+### Function: `public.update_dashboard_lead_booked`
+
+Purpose:
+
+- Called by Booking tab after inserting a booking.
+- Updates the matching `dashboard_leads` row.
+- Sets pipeline to `booked`.
+
+SQL:
+
+```sql
+create or replace function public.update_dashboard_lead_booked(
+  p_lead_id text,
+  p_showing_at text
+)
+returns table (
+  updated_lead_id text,
+  updated_pipeline_status text
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  return query
+  update public.dashboard_leads dl
+  set
+    pipeline_stage = 'showing_scheduled',
+    pipeline_status = 'booked',
+    appointment_status = 'booked',
+    confirmation_status = 'pending_confirmation',
+    attendance_status = 'pending',
+    showing_at = p_showing_at,
+    last_pipeline_update_at = now()
+  where dl.lead_id::text = p_lead_id
+  returning
+    dl.lead_id::text,
+    dl.pipeline_status::text;
+end;
+$$;
+
+grant execute on function public.update_dashboard_lead_booked(text, text) to anon;
+grant execute on function public.update_dashboard_lead_booked(text, text) to authenticated;
+```
+
+### Test RPC directly
+
+```sql
+select *
+from public.update_dashboard_lead_booked(
+  '463',
+  '2026-06-12 22:00:00+00'
+);
+```
+
+### Verify lead update
+
+```sql
+select
+  lead_id,
+  lead_name,
+  phone,
+  apt_address,
+  pipeline_status,
+  pipeline_stage,
+  appointment_status,
+  confirmation_status,
+  attendance_status,
+  showing_at,
+  last_pipeline_update_at
+from public.dashboard_leads
+where lead_id = '463';
+```
+
+Expected result:
+
+```text
+pipeline_status = booked
+pipeline_stage = showing_scheduled
+appointment_status = booked
+confirmation_status = pending_confirmation
+attendance_status = pending
+```
+
+---
+
+## 6. Leads Tab Changes
+
+Files added/updated:
+
+```text
+components/leads/LeadsTab.tsx
+components/leads/LeadsTab.module.css
+```
+
+### Leads Tab Features Implemented
+
+- Modern card layout.
+- Top selected lead panel.
+- Pipeline progress line with circles.
+- Current status circle has glow/shadow.
+- Lead list/table is scrollable while top area stays fixed.
+- Clicking a row highlights/selects it.
+- Checkbox per lead.
+- Select all visible checkbox.
+- Search input.
+- Date range filters.
+- Pipeline status filter buttons.
+- Follow-up pool filter.
+- Copy for QuoSender button.
+
+### Copy for QuoSender Logic
+
+If leads are selected with checkboxes:
+
+```text
+Copy selected leads
+```
+
+If no leads are selected:
+
+```text
+Copy currently filtered leads
+```
+
+Copied format:
+
+```text
+phone | name | address
+```
+
+### Important Leads Tab Data Source
+
+`LeadsTab.tsx` reads data passed from `app/page.tsx`.
+
+`app/page.tsx` must select `pipeline_status` from:
+
+```text
+dashboard_leads_clean
+```
+
+Required select fields include:
+
+```text
+lead_id
+created_at
+created_at_ts
+lead_name
+phone
+apt_address
+current_status
+conversation_stage
+needs_human_review_bool
+notes
+last_outbound_sms
+last_outbound_at
+pipeline_status
+```
+
+Example select:
+
+```ts
+.select(
+  "lead_id, created_at, created_at_ts, lead_name, phone, apt_address, current_status, conversation_stage, needs_human_review_bool, notes, last_outbound_sms, last_outbound_at, pipeline_status"
+)
+```
+
+### Selected Lead Fix
+
+The top pipeline panel originally stayed on an old selected lead after filtering. Fixed by making the selected lead prefer the currently filtered list:
+
+```ts
+const selectedLead = useMemo(() => {
+  const selectedFromFiltered = filteredLeads.find(
+    (lead) => String(lead.lead_id) === String(selectedLeadId)
+  );
+
+  return selectedFromFiltered || filteredLeads[0] || null;
+}, [filteredLeads, selectedLeadId]);
+```
+
+---
+
+## 7. Booking Tab Changes
+
+File updated:
+
+```text
+components/booking/BookingTab.tsx
+```
+
+### Booking Tab Goal
+
+When clicking:
+
+```text
+Add Booking → Book Selected Schedule
+```
+
+the app should now:
+
+```text
+1. Find the correct lead row
+2. Insert appointment into dashboard_showing_appointments
+3. Call RPC update_dashboard_lead_booked
+4. Update dashboard_leads.pipeline_status to booked
+5. Leads tab shows Booked after Refresh
+```
+
+### Important Booking Insert Target
+
+Booking creates rows in:
+
+```text
+public.dashboard_showing_appointments
+```
+
+The pipeline source of truth is updated in:
+
+```text
+public.dashboard_leads
+```
+
+The Leads tab reads from:
+
+```text
+public.dashboard_leads_clean
+```
+
+which reads from:
+
+```text
+public.dashboard_leads
+```
+
+### Add Booking Fix
+
+The Add Booking flow now calls:
+
+```ts
+const { data: updatedRows, error: leadUpdateError } = await supabase.rpc(
+    "update_dashboard_lead_booked",
+    {
+        p_lead_id: String(pipelineLeadId),
+        p_showing_at: schedule.showing_at,
+    }
+);
+```
+
+This replaced the unreliable browser-side direct update.
+
+### Booking-to-Pipeline Mapping
+
+Current booking status mapping:
+
+```text
+Add booking              → pipeline_status = booked
+confirmation confirmed  → pipeline_status = confirmed
+attendance attended     → pipeline_status = showed
+attendance no_show      → pipeline_status = no_show
+attendance cancelled    → pipeline_status = cancelled
+attendance rescheduled  → pipeline_status = reschedule_needed
+delete booking          → pipeline_status = reschedule_needed
+```
+
+### Helper Function Added in BookingTab
+
+```ts
+function getPipelineStatusFromBooking({
+    appointmentStatus,
+    confirmationStatus,
+    attendanceStatus,
+}: {
+    appointmentStatus?: string | null;
+    confirmationStatus?: string | null;
+    attendanceStatus?: string | null;
+}) {
+    const appointment = String(appointmentStatus || "").toLowerCase();
+    const confirmation = String(confirmationStatus || "").toLowerCase();
+    const attendance = String(attendanceStatus || "").toLowerCase();
+
+    if (attendance === "attended") return "showed";
+    if (attendance === "no_show") return "no_show";
+    if (attendance === "cancelled") return "cancelled";
+    if (attendance === "rescheduled") return "reschedule_needed";
+
+    if (confirmation === "confirmed") return "confirmed";
+
+    if (appointment === "completed") return "showed";
+    if (appointment === "confirmed") return "confirmed";
+    if (appointment === "booked") return "booked";
+    if (appointment === "no_show") return "no_show";
+    if (appointment === "cancelled") return "cancelled";
+    if (appointment === "rescheduled") return "reschedule_needed";
+
+    return "booked";
+}
+```
+
+---
+
+## 8. Debugging History / Important Lessons
+
+### Problem 1: View column order error
+
+Error:
+
+```text
+cannot change name of view column "last_inbound_sms" to "pipeline_status"
+```
+
+Cause:
+
+`pipeline_status` was inserted in the middle of an existing view definition.
+
+Fix:
+
+Add `pipeline_status` at the end of `dashboard_leads_clean`.
+
+---
+
+### Problem 2: Duplicate React keys
+
+Error:
+
+```text
+Encountered two children with the same key
+```
+
+Cause:
+
+Some `lead_id` values repeat or rows are not unique enough for React rendering.
+
+Fix:
+
+Use a row key based on:
+
+```text
+lead_id
+phone
+apt_address
+created_at/created_at_ts
+visible index
+```
+
+---
+
+### Problem 3: Booking added but Leads tab stayed New Lead
+
+Observed:
+
+```text
+dashboard_showing_appointments.appointment_status = booked
+dashboard_leads.pipeline_status = new_lead
+```
+
+Cause:
+
+Booking insert was working, but `dashboard_leads` update was not.
+
+Fix:
+
+Added RPC:
+
+```text
+public.update_dashboard_lead_booked
+```
+
+Then Booking tab calls RPC after inserting the appointment.
+
+---
+
+### Problem 4: Duplicate leads / same person different apartments
+
+Example:
+
+Same person/phone can exist with multiple apartment rows.
+
+So the system should be careful when matching by:
+
+```text
+lead_id only
+```
+
+The current Booking tab tries to find a matching dashboard lead row by:
+
+```text
+schedule apartment + phone match
+```
+
+then falls back to:
+
+```text
+foundLead.lead_id
+```
+
+This helps avoid updating the wrong apartment row.
+
+---
+
+## 9. Useful SQL Checks
+
+### Check if a lead pipeline updated
+
+```sql
+select
+  lead_id,
+  lead_name,
+  phone,
+  apt_address,
+  pipeline_status,
+  pipeline_stage,
+  appointment_status,
+  confirmation_status,
+  attendance_status,
+  showing_at,
+  last_pipeline_update_at
+from public.dashboard_leads
+where phone ilike '%PHONE_LAST_OR_FULL%'
+   or lead_name ilike '%NAME%';
+```
+
+### Check matching appointments
+
+```sql
+select
+  id,
+  schedule_id,
+  lead_id,
+  lead_name,
+  phone,
+  apt_address,
+  showing_at,
+  appointment_status,
+  confirmation_status,
+  attendance_status
+from public.dashboard_showing_appointments
+where phone ilike '%PHONE_LAST_OR_FULL%'
+   or lead_name ilike '%NAME%'
+order by id desc;
+```
+
+### Check recent appointments and lead status
+
+```sql
+select
+  a.id as appointment_id,
+  a.lead_id as appointment_lead_id,
+  a.lead_name,
+  a.phone,
+  a.apt_address as appointment_apt,
+  a.showing_at,
+  a.appointment_status,
+  dl.lead_id as dashboard_lead_id,
+  dl.apt_address as dashboard_apt,
+  dl.pipeline_status,
+  dl.pipeline_stage,
+  dl.appointment_status as lead_appointment_status
+from public.dashboard_showing_appointments a
+left join public.dashboard_leads dl
+  on dl.lead_id::text = a.lead_id::text
+order by a.id desc
+limit 20;
+```
+
+### Backfill existing booked appointments into dashboard leads
+
+Use when old appointments exist but leads still say `new_lead`:
+
+```sql
+update public.dashboard_leads dl
+set
+  pipeline_status = case
+    when a.attendance_status = 'attended' then 'showed'
+    when a.attendance_status = 'no_show' then 'no_show'
+    when a.attendance_status = 'cancelled' then 'cancelled'
+    when a.attendance_status = 'rescheduled' then 'reschedule_needed'
+    when a.confirmation_status = 'confirmed' then 'confirmed'
+    when a.appointment_status = 'confirmed' then 'confirmed'
+    when a.appointment_status = 'completed' then 'showed'
+    when a.appointment_status = 'cancelled' then 'cancelled'
+    when a.appointment_status = 'rescheduled' then 'reschedule_needed'
+    when a.appointment_status = 'no_show' then 'no_show'
+    else 'booked'
+  end,
+  pipeline_stage = case
+    when a.attendance_status = 'attended' then 'attended'
+    when a.attendance_status = 'no_show' then 'no_show'
+    when a.attendance_status = 'cancelled' then 'cancelled'
+    when a.attendance_status = 'rescheduled' then 'rescheduled'
+    when a.confirmation_status = 'confirmed' then 'confirmed'
+    else 'showing_scheduled'
+  end,
+  appointment_status = a.appointment_status,
+  confirmation_status = a.confirmation_status,
+  attendance_status = a.attendance_status,
+  showing_at = a.showing_at,
+  last_pipeline_update_at = now()
+from public.dashboard_showing_appointments a
+where dl.lead_id::text = a.lead_id::text
+  and a.appointment_status = 'booked';
+```
+
+---
+
+## 10. Current Working Confirmation
+
+Confirmed working:
+
+```text
+Add Booking creates appointment row
+RPC updates dashboard_leads.pipeline_status
+Leads tab shows Booked after Refresh
+```
+
+If the Leads tab does not visually update:
+
+1. Click Refresh in Leads tab.
+2. Check `app/page.tsx` select includes `pipeline_status`.
+3. Check `dashboard_leads_clean` includes `pipeline_status`.
+4. Check the selected top panel uses filtered selected lead.
+5. Verify Supabase row using SQL.
+
+---
+
+## 11. Next Steps
+
+### Next Step 1: Make Booking tab auto-refresh Leads tab state
+
+Currently:
+
+```text
+Booking tab updates Supabase
+Leads tab needs Refresh
+```
+
+Future improvement:
+
+- Lift lead refresh function into parent `app/page.tsx`.
+- Pass it to Booking tab.
+- After booking, automatically refresh leads in dashboard state.
+
+Possible goal:
+
+```text
+Book Selected Schedule
+→ update Supabase
+→ refresh booking data
+→ refresh leads data
+→ Leads tab already shows Booked when opened
+```
+
+---
+
+### Next Step 2: Add RPC functions for other status changes
+
+Currently, Add Booking uses RPC for `booked`.
+
+Future RPCs could include:
+
+```text
+update_dashboard_lead_confirmed
+update_dashboard_lead_showed
+update_dashboard_lead_no_show
+update_dashboard_lead_cancelled
+update_dashboard_lead_reschedule_needed
+```
+
+Or better, create one generic RPC:
+
+```text
+public.update_dashboard_lead_pipeline_status(
+  p_lead_id text,
+  p_pipeline_status text,
+  p_pipeline_stage text,
+  p_appointment_status text,
+  p_confirmation_status text,
+  p_attendance_status text,
+  p_showing_at text
+)
+```
+
+This would reduce duplicated client-side update logic.
+
+---
+
+### Next Step 3: Sync n8n outbound SMS stages to `pipeline_status`
+
+n8n should update these statuses when sending SMS:
+
+```text
+Intro sent                  → contacted
+Requirements message sent   → requirements_sent
+Schedule availability sent  → schedule_sent
+```
+
+This ensures Leads tab accurately reflects automation progress before booking.
+
+---
+
+### Next Step 4: Add Template/Sending into Mission Control
+
+Current:
+
+```text
+Mission Control Leads tab
+→ Copy selected leads
+→ Paste into QuoSender
+```
+
+Future:
+
+```text
+Mission Control Leads tab
+→ Select leads
+→ Choose template
+→ Send through QuoSender/web-auto-click endpoint
+→ Update Supabase pipeline_status
+```
+
+Suggested status updates:
+
+```text
+Send intro template        → contacted
+Send requirements template → requirements_sent
+Send schedule template     → schedule_sent
+```
+
+---
+
+### Next Step 5: Improve duplicate lead matching
+
+Current issue:
+
+Same phone/person may exist for multiple apartments.
+
+Long-term improvement:
+
+- Add a reliable unique row id to `dashboard_leads`, if not already present.
+- Use that row id when booking, instead of fuzzy matching.
+- Keep `lead_id` as external/import lead id if needed.
+- Consider a normalized phone column.
+
+Suggested columns:
+
+```text
+dashboard_lead_uuid uuid primary key default gen_random_uuid()
+normalized_phone text
+```
+
+Then booking can safely store:
+
+```text
+dashboard_lead_uuid
+```
+
+instead of only `lead_id`.
+
+---
+
+### Next Step 6: Create pipeline analytics
+
+Once statuses are stable:
+
+Dashboard can show:
+
+```text
+Total new leads
+Contacted
+Requirements sent
+Schedule sent
+Booked
+Confirmed
+Showed
+No-show rate
+Booking conversion rate
+Show rate
+Lost leads
+Nurture pool
+```
+
+---
+
+## 12. Important Files to Inspect If Continuing
+
+Start with these files:
+
+```text
+app/page.tsx
+components/leads/LeadsTab.tsx
+components/leads/LeadsTab.module.css
+components/booking/BookingTab.tsx
+components/booking/BookingTab.module.css
+lib/supabase.ts
+```
+
+Then inspect Supabase:
+
+```text
+public.dashboard_leads
+public.dashboard_leads_clean
+public.dashboard_showing_schedules
+public.dashboard_showing_appointments
+public.update_dashboard_lead_booked
+```
+
+Then inspect external flow:
+
+```text
+Zillow scraper Chrome extension
+Google Sheets lead sheet
+n8n workflow
+QuoSender app
+web-auto-click / Quo sending server
+```
+
+---
+
+## 13. One-Sentence Handoff Summary
+
+We added a simple `pipeline_status` system to Mission Control so scraped Zillow leads can move through `new_lead → contacted → requirements_sent → schedule_sent → booked → confirmed → showed`, with Booking tab now updating Supabase through an RPC when appointments are created, and Leads tab showing searchable/filterable/selectable pipeline rows for follow-up and QuoSender workflows.

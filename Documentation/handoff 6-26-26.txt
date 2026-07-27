@@ -1,0 +1,1504 @@
+# Mission Control Messages Automation — Current Handoff
+
+**Date:** 2026-06-26  
+**Project:** Mission Control Dashboard + Quo/OpenPhone + QuoSender + Web Auto Sender  
+**Current focus:** Keep the automation rule intentionally strict, improve preview visibility, and prepare for webhook-based inbound message detection later.
+
+---
+
+## 1. Current Goal
+
+Mission Control should become the control center for messaging automation.
+
+The current flow is:
+
+```text
+n8n sends intro SMS
+→ lead replies in Quo/OpenPhone
+→ Mission Control checks messages
+→ automation applies a conservative rule
+→ if safe, render requirements template preview
+→ if not safe, send to Human Review
+→ later, Web Auto / auto-clicker sends SMS
+→ Supabase lead pipeline updates only after successful send
+```
+
+The immediate goal is **not full auto-send yet**. The current goal is:
+
+```text
+Detect clean intro + one lead reply
+→ match the correct lead/apartment
+→ pull/render the QuoSender requirements template
+→ show a preview pane with the rendered SMS
+→ verify variables like apt address, price, schedule, and other template values
+```
+
+---
+
+## 2. Important Agreement From Latest Discussion
+
+We agreed to keep the current strict automation rule for testing.
+
+### Do not loosen the rule yet
+
+The rule should remain:
+
+```text
+Only auto-select requirements template when the whole conversation has exactly:
+1. one outbound intro message from us
+2. one inbound positive reply from the lead
+```
+
+Everything else goes to Human Review.
+
+This is intentional because testing should be conservative for the next few days.
+
+Later, after testing, the logic can be gradually expanded to handle older thread history by checking the newest inbound reply plus the closest prior outbound context. But that is **not the current rule**.
+
+---
+
+## 3. Current Strict Rule
+
+A conversation is eligible for requirements-template preview only when:
+
+```text
+ordered.length === 2
+AND ordered[0] is our intro template
+AND ordered[1] is inbound from the lead
+AND inbound reply is clearly positive
+```
+
+Positive signals currently include words like:
+
+```text
+yes, yeah, yep, interested, available, schedule, showing, tour, see,
+today, tomorrow, Sunday, Monday, Tuesday, Wednesday, Thursday, Friday, Saturday
+```
+
+Negative or unsafe signals should block auto-selection and go to Human Review, including:
+
+```text
+stop, unsubscribe, wrong number, not interested, no longer interested,
+already found, too expensive, scam, who is this
+```
+
+Human Review should receive:
+
+```text
+- threads with more than 2 messages
+- threads missing phoneNumberId or participants
+- replies that are not clearly positive
+- wrong number / stop / not interested replies
+- no matching eligible lead
+- multiple matching eligible leads
+- template render failure
+- empty rendered template
+- missing matched lead apartment address
+- later: Web Auto send failures
+- later: pipeline update failures
+```
+
+---
+
+## 4. Current Apps / Services
+
+### Mission Control Dashboard
+
+```text
+localhost:3002
+project: mission-control-dashboard/
+```
+
+Mission Control currently owns:
+
+```text
+- Messages Automation Monitor
+- Run Now / Rescan Latest
+- polling state
+- processing timeline
+- Human Review preview
+- selected template preview
+- future Web Auto send status
+```
+
+### QuoSender
+
+```text
+localhost:3000
+project: quosenderv2/packages/sender/server/
+```
+
+QuoSender is currently used for:
+
+```text
+- template builder/admin
+- rendering templates with apartment variables
+- current requirements template source
+```
+
+Important current renderer endpoint used by Mission Control:
+
+```text
+POST http://127.0.0.1:3000/api/templates/render-by-address
+```
+
+Mission Control sends:
+
+```json
+{
+  "apt_address": "matched apartment address",
+  "templateKey": "02_requirements_request_v1"
+}
+```
+
+Expected result includes one of:
+
+```text
+message
+renderedMessage
+text
+body
+content
+```
+
+Mission Control extracts the rendered SMS from those fields.
+
+### Web Auto / Auto-clicker Sender
+
+```text
+localhost:3001
+```
+
+This is the future actual SMS send engine.
+
+Not connected yet for final send.
+
+---
+
+## 5. Current Trigger Model
+
+The current handoff/build is **polling-based**, not webhook-based yet.
+
+Current trigger:
+
+```text
+Run Now button
+or frontend polling interval
+→ POST /api/messages-automation/run-now
+→ fetch recent Quo/OpenPhone conversations/messages
+→ compare against message_automation_state.last_checked_at
+→ process new messages
+```
+
+Current new-message detection is based on:
+
+```text
+message timestamp > message_automation_state.last_checked_at
+```
+
+The Rescan Latest button calls:
+
+```text
+POST /api/messages-automation/run-now?ignoreCheckpoint=1
+```
+
+That ignores `last_checked_at` for testing.
+
+Clear Monitor now resets:
+
+```text
+last_checked_at = null
+polling_enabled = false
+status = idle
+```
+
+---
+
+## 6. Future Trigger Model: Quo/OpenPhone Webhook
+
+Later, add a real inbound webhook so Quo/OpenPhone notifies Mission Control when a new message arrives.
+
+Future flow:
+
+```text
+Lead replies in Quo/OpenPhone
+→ Quo sends message.received webhook
+→ Mission Control webhook route receives payload
+→ extract message id, phone, text, timestamp, conversation id
+→ upsert into public.messages using external_message_id
+→ pass message into same automation decision processor
+→ render preview or create Human Review item
+```
+
+Recommended webhook route:
+
+```text
+mission-control-dashboard/app/api/messages-automation/webhook/route.ts
+```
+
+Alternative route:
+
+```text
+mission-control-dashboard/app/api/quo/webhooks/messages/route.ts
+```
+
+Preferred route:
+
+```text
+app/api/messages-automation/webhook/route.ts
+```
+
+because the webhook belongs to the automation system.
+
+### Webhook newness should not use last_checked_at
+
+Polling can use `last_checked_at`, but webhook processing should use:
+
+```text
+external_message_id
+```
+
+Production-safe newness logic:
+
+```text
+If external_message_id already exists in public.messages or ai_decisions:
+    skip duplicate
+Else:
+    treat as new inbound event
+```
+
+### Webhook should not auto-send at first
+
+First webhook version should only:
+
+```text
+receive → log → match → render preview → Human Review if unsafe
+```
+
+Do not enable automatic SMS send until webhook payloads and dedupe are proven.
+
+---
+
+## 7. Cloudflare Tunnel Needed Later
+
+Because Quo/OpenPhone webhooks need a public HTTPS URL, local development will need a tunnel.
+
+Recommended option:
+
+```text
+Cloudflare Tunnel
+```
+
+Goal:
+
+```text
+public HTTPS URL
+→ forwards to localhost:3002
+→ Quo webhook target points to public URL
+```
+
+Example target once configured:
+
+```text
+https://your-public-tunnel-domain/api/messages-automation/webhook
+```
+
+Cloudflare Tunnel should be installed/configured later on the dev machine or deployment server.
+
+Need later steps:
+
+```text
+1. Install cloudflared
+2. Authenticate Cloudflare account
+3. Create tunnel to localhost:3002
+4. Add DNS route/subdomain
+5. Add webhook endpoint URL in Quo/OpenPhone
+6. Test with a real inbound SMS
+7. Confirm Mission Control receives payload
+8. Confirm duplicate webhook events are ignored by external_message_id
+```
+
+---
+
+## 8. Supabase Tables / Schemas Identified
+
+The latest working system uses multiple related tables, not one single table.
+
+### `public.dashboard_leads`
+
+This is the live lead pipeline source table.
+
+Important columns identified:
+
+```text
+lead_id text
+created_at text
+lead_name text
+phone text
+apt_address text
+source text
+current_status text
+conversation_stage text
+last_inbound_sms text
+last_inbound_at text
+last_outbound_sms text
+last_outbound_at text
+selected_slot text
+needs_human_review text
+stop_automation text
+notes text
+imported_at timestamptz
+pipeline_stage text
+appointment_status text
+confirmation_status text
+attendance_status text
+showing_at text
+last_pipeline_update_at text
+updated_at timestamptz
+pipeline_status text
+```
+
+Important: several timestamp/status fields are text, so RPCs should use:
+
+```sql
+now()::text
+```
+
+for fields like:
+
+```text
+last_inbound_at
+last_outbound_at
+last_pipeline_update_at
+```
+
+### `public.dashboard_leads_clean`
+
+This is the cleaned read view used by the Leads tab.
+
+Important columns identified:
+
+```text
+lead_id
+created_at
+lead_name
+phone
+apt_address
+source
+current_status
+conversation_stage
+last_inbound_sms
+last_inbound_at
+last_outbound_sms
+last_outbound_at
+selected_slot
+needs_human_review
+stop_automation
+notes
+created_at_ts
+last_inbound_at_ts
+last_outbound_at_ts
+needs_human_review_bool
+stop_automation_bool
+pipeline_status
+```
+
+Leads tab reads from this view.
+
+### `public.messages`
+
+This is the existing message log table. Do not create a duplicate messages table.
+
+Important columns identified:
+
+```text
+id
+created_at
+conversation_id
+lead_id
+property_id
+phone
+channel
+direction
+message_text
+external_message_id
+external_conversation_id
+processed
+intent
+template_key
+```
+
+Future webhook and polling should insert/upsert inbound messages here using:
+
+```text
+external_message_id
+```
+
+Future suggested inbound insert shape:
+
+```ts
+{
+  phone: contactPhoneNumber,
+  channel: "quo",
+  direction: "inbound",
+  message_text: messageBody,
+  external_message_id: quoMessageId,
+  external_conversation_id: quoConversationId,
+  processed: false
+}
+```
+
+### `public.conversations`
+
+Important columns identified:
+
+```text
+id bigint
+created_at timestamptz
+updated_at timestamptz
+lead_id bigint
+property_id bigint
+phone text
+channel text
+status text
+last_message_at timestamptz
+last_message_text text
+needs_human boolean
+stop_automation boolean
+summary text
+```
+
+### `public.templates`
+
+The table exists, but QuoSender is still the live renderer for now.
+
+Important columns identified:
+
+```text
+id bigint
+created_at timestamptz
+updated_at timestamptz
+template_name text
+template_type text
+channel text
+stage text
+intent text
+content text
+requires_human_approval boolean
+is_active boolean
+priority integer
+```
+
+Templates to eventually move/store:
+
+```text
+01_initial_outreach_intro_v1
+02_requirements_request_v1
+03_showing_invitation_v1
+04_appointment_confirmed_v1
+05_same_day_confirmation_v1
+06_still_interested_followup_v1
+07_keep_posted_schedule_v1
+08_missed_call_reply_v1
+09_only_time_available_v1
+```
+
+Current first template:
+
+```text
+02_requirements_request_v1
+```
+
+But for now, keep rendering through QuoSender because QuoSender already knows how to fill variables like:
+
+```text
+apt address
+price
+bedrooms
+booking schedule
+showing slots
+other apartment-specific values
+```
+
+### `public.human_escalations`
+
+Used by Human Review.
+
+Important columns identified:
+
+```text
+id bigint
+created_at timestamptz
+updated_at timestamptz
+lead_id bigint
+property_id bigint
+conversation_id bigint
+message_id bigint
+phone text
+reason text
+priority text
+status text
+assigned_to text
+human_notes text
+resolved_at timestamptz
+```
+
+Automation review rows currently use:
+
+```text
+reason = automation:<reason>
+status = open
+priority = normal
+phone = normalized phone
+human_notes = JSON string with Quo/context details
+```
+
+### `public.ai_decisions`
+
+Used by the Messages tab processing timeline.
+
+Important columns identified:
+
+```text
+id bigint
+created_at timestamptz
+message_id bigint
+conversation_id bigint
+lead_id bigint
+property_id bigint
+intent text
+confidence numeric
+matched_template_id bigint
+decision text
+reply_text text
+needs_human boolean
+human_reason text
+should_send boolean
+sent boolean
+error text
+model_used text
+prompt_version text
+```
+
+Current values:
+
+```text
+prompt_version = message_automation_v1
+model_used = rule_based
+intent = intro_reply_requirements
+```
+
+Current `reply_text` can contain JSON payload for preview:
+
+```json
+{
+  "phone": "+1...",
+  "inboundText": "Yes I would like to see the apartment",
+  "templateKey": "02_requirements_request_v1",
+  "messagePreview": "rendered SMS text here",
+  "lead": {
+    "lead_id": "...",
+    "lead_name": "...",
+    "phone": "...",
+    "apt_address": "...",
+    "current_status": "contacted",
+    "conversation_stage": "intro_sent",
+    "pipeline_status": "new_lead"
+  },
+  "reason": "clean_intro_plus_positive_reply",
+  "nextStep": "Ready to send through Web Auto",
+  "quoSenderTemplateResponse": {}
+}
+```
+
+### `public.message_automation_state`
+
+Created for monitor state/checkpoint.
+
+Schema:
+
+```sql
+create table if not exists public.message_automation_state (
+  id text primary key,
+  polling_enabled boolean not null default false,
+  interval_minutes integer not null default 2,
+  status text not null default 'idle',
+  last_checked_at timestamptz,
+  updated_at timestamptz not null default now()
+);
+```
+
+Main row:
+
+```text
+id = main
+```
+
+Used for:
+
+```text
+polling_enabled
+interval_minutes
+status
+last_checked_at
+updated_at
+```
+
+---
+
+## 9. Leads Tab and Messages Tab Relationship
+
+The Leads tab and Messages tab are connected through Supabase, but they do not read from only one table.
+
+Current relationship:
+
+```text
+Leads tab
+→ reads public.dashboard_leads_clean
+→ view is based on public.dashboard_leads
+
+Messages tab
+→ reads/writes public.message_automation_state
+→ reads/writes public.ai_decisions
+→ reads/writes public.human_escalations
+→ calls QuoSender for template rendering
+→ later writes public.messages
+→ later updates public.dashboard_leads after successful send
+```
+
+After the requirements SMS is actually sent later:
+
+```text
+Web Auto send succeeds
+→ update public.dashboard_leads
+→ public.dashboard_leads_clean reflects update
+→ Leads tab shows new status
+```
+
+Required pipeline update after successful requirements send:
+
+```text
+conversation_stage = requirements_sent
+pipeline_status = requirements_sent
+last_inbound_sms = inbound reply
+last_inbound_at = now()::text
+last_outbound_sms = rendered requirements message
+last_outbound_at = now()::text
+needs_human_review = false
+last_pipeline_update_at = now()::text
+updated_at = now()
+```
+
+---
+
+## 10. Known Supabase Status Issue
+
+Current real data often has:
+
+```text
+current_status = contacted
+conversation_stage = intro_sent
+pipeline_status = new_lead
+```
+
+Therefore the eligibility lookup should **not** rely on:
+
+```text
+pipeline_status = contacted
+```
+
+It should use:
+
+```text
+current_status = contacted
+conversation_stage = intro_sent
+```
+
+Later, n8n or `mark_intro_sent` should also update:
+
+```text
+pipeline_status = contacted
+```
+
+---
+
+## 11. RPCs / Functions Needed or Already Planned
+
+### Phone normalization helper
+
+```sql
+create or replace function public.normalize_phone_text(p_phone text)
+returns text
+language sql
+immutable
+as $$
+  select nullif(regexp_replace(coalesce(p_phone, ''), '\D', '', 'g'), '');
+$$;
+```
+
+Later improvement: compare last 10 digits for US numbers because data may appear as:
+
+```text
++17189542664
+7189542664
+```
+
+### Corrected lead lookup RPC
+
+Need to drop/recreate if return shape changed:
+
+```sql
+drop function if exists public.find_single_contacted_lead_for_auto_reply(text);
+```
+
+Purpose:
+
+```text
+Given inbound phone number,
+return matched_count and lead details only if exactly one eligible lead exists.
+```
+
+Eligibility:
+
+```text
+phone matches
+current_status = contacted
+conversation_stage = intro_sent
+pipeline_status not already advanced
+stop_automation not true/yes/1
+needs_human_review not true/yes/1
+```
+
+Expected result:
+
+```text
+matched_count = 1 → safe to continue template preview
+matched_count = 0 → Human Review
+matched_count > 1 → Human Review
+```
+
+### mark_lead_requirements_sent
+
+Existing/planned function:
+
+```text
+public.mark_lead_requirements_sent(
+  p_lead_id text,
+  p_inbound_sms text,
+  p_outbound_sms text
+)
+```
+
+Should update both old and new status fields:
+
+```text
+current_status = contacted
+conversation_stage = requirements_sent
+pipeline_status = requirements_sent
+needs_human_review = false
+last_inbound_sms = p_inbound_sms
+last_inbound_at = now()::text
+last_outbound_sms = p_outbound_sms
+last_outbound_at = now()::text
+last_pipeline_update_at = now()::text
+updated_at = now()
+```
+
+---
+
+## 12. Files Currently Updated / Involved
+
+### Mission Control files
+
+```text
+mission-control-dashboard/app/api/messages-automation/monitor/route.ts
+mission-control-dashboard/app/api/messages-automation/run-now/route.ts
+mission-control-dashboard/components/messages/MessagesTab.tsx
+mission-control-dashboard/components/messages/MessagesTab.module.css
+mission-control-dashboard/lib/supabase.ts
+mission-control-dashboard/lib/supabase-server.ts
+mission-control-dashboard/lib/quo.ts
+mission-control-dashboard/lib/quosender.ts
+```
+
+### `monitor/route.ts`
+
+Current responsibilities:
+
+```text
+GET:
+- ensure message_automation_state exists
+- return monitor state
+- return recent ai_decisions for prompt_version = message_automation_v1
+- return open human_escalations where reason starts automation:
+
+PATCH:
+- update polling_enabled
+- update interval_minutes
+- update status
+
+DELETE:
+- delete ai_decisions for prompt_version
+- resolve open automation human_escalations
+- reset message_automation_state:
+  polling_enabled = false
+  status = idle
+  last_checked_at = null
+```
+
+This already includes the important Clear Monitor reset.
+
+### `run-now/route.ts`
+
+Current responsibilities:
+
+```text
+- ensure monitor state exists
+- read ignoreCheckpoint query param
+- set status = fetching
+- list Quo conversations
+- filter to QUO_PRIMARY_INBOX_ID if present
+- list messages for each conversation
+- apply strict decideConversation rule
+- update last_checked_at to newest seen message timestamp
+- choose one actionable decision
+- if send_requirements:
+    - lookup eligible lead
+    - require exactly one lead
+    - require apt_address
+    - call QuoSender render-by-address
+    - extract rendered message preview
+    - save preview JSON into ai_decisions.reply_text
+    - set state = template_selected
+- if unsafe:
+    - create/update human_escalations
+    - log ai_decisions
+```
+
+Important current template key:
+
+```text
+02_requirements_request_v1
+```
+
+Important current prompt version:
+
+```text
+message_automation_v1
+```
+
+### `MessagesTab.tsx`
+
+Current responsibilities:
+
+```text
+- load monitor state
+- display Automation Status
+- Start/Pause polling
+- edit interval
+- Clear Monitor
+- Rescan Latest
+- Run Now
+- Queue Summary
+- Processing Timeline
+- parse ai_decisions.reply_text JSON
+- show Inbound Reply
+- show Matched Lead
+- show Template
+- show Message Preview
+- show Next Step
+- show Human Review list
+- show After Successful Send rules
+```
+
+### `MessagesTab.module.css`
+
+Current responsibilities:
+
+```text
+- dashboard layout
+- cards
+- buttons
+- status pills
+- timeline
+- scrollable timeline
+- scrollable review list
+- decision preview sections
+- message preview preformatted box
+```
+
+Scroll fixes already present:
+
+```css
+.timeline {
+  max-height: 360px;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+
+.reviewList {
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+```
+
+### `lib/supabase.ts`
+
+Browser anon client.
+
+Do not remove this because app/page.tsx and client components need it.
+
+```ts
+import { createClient } from "@supabase/supabase-js";
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+```
+
+### `lib/supabase-server.ts`
+
+Server-only service role client.
+
+Used by API routes.
+
+Requires:
+
+```env
+SUPABASE_SERVICE_ROLE_KEY=...
+```
+
+### `lib/quo.ts`
+
+Server-side Quo/OpenPhone client.
+
+Current responsibilities:
+
+```text
+- listQuoConversations
+- listQuoMessages
+- normalize participants to E.164
+- identify inbound directions
+- identify outbound directions
+- get message text/time
+```
+
+Important direction values observed:
+
+```text
+outgoing = outbound
+received = inbound
+```
+
+Important participant normalization:
+
+```text
+8622851232 → +18622851232
+```
+
+### `lib/quosender.ts`
+
+Current responsibilities:
+
+```text
+- call QuoSender render-by-address endpoint
+- pass apt_address and templateKey
+- extract rendered SMS text
+```
+
+Environment variable:
+
+```env
+QUOSENDER_BASE_URL=http://127.0.0.1:3000
+```
+
+Default fallback is already:
+
+```text
+http://127.0.0.1:3000
+```
+
+---
+
+## 13. Environment Variables Identified
+
+Mission Control `.env.local` should include:
+
+```env
+NEXT_PUBLIC_SUPABASE_URL=...
+NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+SUPABASE_SERVICE_ROLE_KEY=...
+
+QUO_API_KEY=...
+QUO_BASE_URL=https://api.openphone.com
+QUO_PRIMARY_INBOX_ID=PNAO2aXSml
+
+QUOSENDER_BASE_URL=http://127.0.0.1:3000
+```
+
+Known primary inbox:
+
+```text
+QUO_PRIMARY_INBOX_ID=PNAO2aXSml
+```
+
+Observed primary number:
+
+```text
+(201) 350-1990
+```
+
+---
+
+## 14. Preview Pane Requirement
+
+The preview pane is now the main testing tool.
+
+When a clean strict conversation passes, the UI should show:
+
+```text
+Inbound Reply
+- phone
+- inbound message text
+
+Matched Lead
+- lead name
+- phone
+- apartment address
+- lead id
+- current_status
+- conversation_stage
+- pipeline_status
+
+Template
+- template key/name
+- source = QuoSender
+- rendered using actual matched apartment address
+
+Message Preview
+- final rendered SMS from QuoSender
+
+Next Step
+- Ready to send through Web Auto
+```
+
+Because QuoSender templates depend on variables, the preview must verify:
+
+```text
+apt address
+price
+bedrooms
+schedule
+booking slots
+contact phone
+other apartment-specific values
+```
+
+### Agreed small UI improvement
+
+Add `quoSenderTemplateResponse` to the frontend `DecisionPayload` type so raw render/debug data can be displayed.
+
+Current backend already includes:
+
+```text
+quoSenderTemplateResponse
+```
+
+Frontend should add:
+
+```ts
+type DecisionPayload = {
+  phone?: string | null;
+  inboundText?: string | null;
+  templateKey?: string | null;
+  messagePreview?: string | null;
+  lead?: {
+    lead_id?: string | null;
+    lead_name?: string | null;
+    phone?: string | null;
+    apt_address?: string | null;
+    current_status?: string | null;
+    conversation_stage?: string | null;
+    pipeline_status?: string | null;
+  } | null;
+  reason?: string | null;
+  nextStep?: string | null;
+  quoSenderTemplateResponse?: Record<string, unknown> | null;
+};
+```
+
+Then add this after Message Preview:
+
+```tsx
+{payload.quoSenderTemplateResponse && (
+  <div className={styles.detailSection}>
+    <h3>QuoSender Render Response</h3>
+    <pre className={styles.previewBox}>
+      {JSON.stringify(payload.quoSenderTemplateResponse, null, 2)}
+    </pre>
+  </div>
+)}
+```
+
+Also change template display from:
+
+```tsx
+<DetailRow label="Matched by" value="Apartment address" />
+```
+
+to:
+
+```tsx
+<DetailRow label="Rendered using" value={payload.lead?.apt_address} />
+```
+
+---
+
+## 15. What Should Not Change Yet
+
+Do not change the strict 2-message rule yet.
+
+Do not auto-send SMS yet.
+
+Do not fully replace QuoSender template rendering with Supabase templates yet, because QuoSender currently handles variables.
+
+Do not update `dashboard_leads` to `requirements_sent` until Web Auto confirms the SMS was sent successfully.
+
+Do not rely on `pipeline_status = contacted` for matching because current data still has many `pipeline_status = new_lead` rows after intro.
+
+---
+
+## 16. What Needs To Be Changed Later
+
+### A. Add webhook route
+
+Create:
+
+```text
+app/api/messages-automation/webhook/route.ts
+```
+
+Responsibilities:
+
+```text
+- receive Quo/OpenPhone webhook
+- validate payload / optional signature if available
+- extract message id, conversation id, phone, text, direction, timestamp
+- only process inbound/received messages
+- upsert into public.messages using external_message_id
+- skip duplicates
+- call shared automation processor
+- return 200 quickly
+```
+
+### B. Add shared automation processor
+
+Move common logic out of `run-now/route.ts` into a shared file:
+
+```text
+lib/messages-automation.ts
+```
+
+Shared functions should include:
+
+```text
+normalize phone
+get message text/time
+is inbound
+is outbound
+is positive reply
+is our intro message
+strict decideConversation
+lookup eligible lead
+build decision payload
+create/update human escalation
+log ai_decision
+render template preview
+```
+
+Then both routes use it:
+
+```text
+run-now/route.ts → polling fetch → shared processor
+webhook/route.ts → webhook message → shared processor
+```
+
+### C. Store inbound/outbound messages in `public.messages`
+
+Add durable message logging:
+
+```text
+inbound webhook/poll message
+→ public.messages
+→ external_message_id used for dedupe
+```
+
+Later outbound preview/send should also log:
+
+```text
+outbound requirements template
+→ public.messages
+→ template_key = 02_requirements_request_v1
+→ processed = true
+```
+
+### D. Web Auto send integration
+
+Add later endpoint:
+
+```text
+app/api/messages-automation/send-requirements/route.ts
+```
+
+Responsibilities:
+
+```text
+- receive selected decision / lead / rendered message
+- call Web Auto sender on localhost:3001
+- if success:
+    - call mark_lead_requirements_sent
+    - mark ai_decisions.sent = true
+    - insert outbound message log
+- if failure:
+    - create human_escalation
+    - mark ai_decisions.error
+```
+
+### E. Pipeline update after successful send
+
+Use:
+
+```text
+public.mark_lead_requirements_sent(
+  p_lead_id text,
+  p_inbound_sms text,
+  p_outbound_sms text
+)
+```
+
+Only call this after Web Auto confirms the SMS was sent.
+
+### F. Human Review workspace
+
+Later, the Human Review tab should:
+
+```text
+- read public.human_escalations
+- open a review item
+- show matched lead/message context
+- choose/edit template
+- preview rendered message
+- send manually through Web Auto
+- resolve escalation
+- update dashboard_leads if sent
+```
+
+---
+
+## 17. Next Immediate Steps
+
+When continuing later, do these in order.
+
+### Step 1 — Keep strict rule
+
+Confirm current `decideConversation` still requires:
+
+```text
+exactly 2 messages:
+intro + inbound positive reply
+```
+
+Do not loosen yet.
+
+### Step 2 — Improve preview/debug pane
+
+Update `MessagesTab.tsx`:
+
+```text
+- add quoSenderTemplateResponse to DecisionPayload
+- display raw QuoSender Render Response
+- change Matched by → Rendered using actual apt address
+```
+
+### Step 3 — Test one clean thread
+
+Create or find a conversation where:
+
+```text
+message 1 = outbound intro
+message 2 = positive inbound reply
+```
+
+Run:
+
+```text
+Rescan Latest
+```
+
+Expected UI:
+
+```text
+Automation Status = Template Selected
+Queue Pending = 1
+Processing Timeline shows:
+- inbound reply
+- matched lead
+- template = 02_requirements_request_v1
+- rendered using apt address
+- full message preview
+- raw QuoSender response
+```
+
+### Step 4 — Verify variables
+
+Check preview content for:
+
+```text
+correct apartment address
+correct price
+correct bedrooms
+correct schedule/slots
+correct contact details
+```
+
+If wrong, debug QuoSender `render-by-address` endpoint and apartment matching.
+
+### Step 5 — Add webhook only after preview is stable
+
+Install/configure Cloudflare Tunnel.
+
+Create webhook route.
+
+Point Quo/OpenPhone webhook to:
+
+```text
+https://your-tunnel-domain/api/messages-automation/webhook
+```
+
+At first, webhook should only log/render preview, not send.
+
+### Step 6 — Add Web Auto send later
+
+After webhook and preview are stable:
+
+```text
+template_selected
+→ manual/approved send through Web Auto
+→ mark lead requirements_sent
+```
+
+---
+
+## 18. Current Testing Commands / URLs
+
+### Monitor
+
+```text
+GET  http://localhost:3002/api/messages-automation/monitor
+POST http://localhost:3002/api/messages-automation/run-now
+POST http://localhost:3002/api/messages-automation/run-now?ignoreCheckpoint=1
+DELETE http://localhost:3002/api/messages-automation/monitor
+```
+
+### Quo conversations
+
+```text
+GET http://localhost:3002/api/quo/conversations?limit=100
+```
+
+### Quo messages
+
+Use E.164 participant:
+
+```text
+GET http://localhost:3002/api/quo/conversations/<conversationId>/messages?phoneNumberId=PNAO2aXSml&participants=%2B18622851232&limit=10
+```
+
+Do not use raw 10-digit participant if the Quo messages endpoint requires E.164.
+
+### QuoSender template render
+
+```text
+POST http://127.0.0.1:3000/api/templates/render-by-address
+```
+
+Body:
+
+```json
+{
+  "apt_address": "EXACT APARTMENT ADDRESS",
+  "templateKey": "02_requirements_request_v1"
+}
+```
+
+---
+
+## 19. Current Known Risks
+
+### Risk 1 — Template renderer depends on address matching
+
+If `apt_address` in `dashboard_leads` does not match what QuoSender expects, template variables may be missing or wrong.
+
+Mitigation:
+
+```text
+Show raw QuoSender render response in preview pane.
+```
+
+### Risk 2 — Timestamp checkpoint can hide messages during testing
+
+If `last_checked_at` is newer than the message timestamp, polling will skip it.
+
+Mitigation:
+
+```text
+Use Rescan Latest
+or Clear Monitor to reset last_checked_at = null
+```
+
+### Risk 3 — Polling only runs while dashboard is open
+
+Current frontend polling is not true background automation.
+
+Mitigation later:
+
+```text
+Use n8n cron
+or server cron
+or webhook
+```
+
+### Risk 4 — Same phone can have multiple apartment inquiries
+
+Current safe lookup must return exactly one eligible lead.
+
+Mitigation:
+
+```text
+matched_count = 0 → Human Review
+matched_count = 1 → continue
+matched_count > 1 → Human Review
+```
+
+### Risk 5 — pipeline_status currently stale
+
+Many intro-sent leads still have:
+
+```text
+pipeline_status = new_lead
+```
+
+Mitigation:
+
+```text
+Use current_status + conversation_stage for current matching.
+Later fix n8n/mark_intro_sent to set pipeline_status = contacted.
+```
+
+---
+
+## 20. One-Sentence Summary
+
+Mission Control now has a polling-based Messages Automation Monitor that safely selects `02_requirements_request_v1` only when a Quo/OpenPhone conversation contains exactly one intro message and one positive lead reply; the next work is to improve the preview pane with QuoSender render details, keep all other conversations in Human Review, then later add a Cloudflare-tunneled Quo webhook, message ID dedupe, Web Auto sending, and final Supabase pipeline updates after successful send.

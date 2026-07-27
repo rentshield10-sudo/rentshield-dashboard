@@ -4,6 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import BookingTab from "../components/booking/BookingTab";
 import { supabase } from "../lib/supabase";
 import styles from "./page.module.css";
+import LeadsTab from "../components/leads/LeadsTab";
+import MessagesTab from "../components/messages/MessagesTab";
+import RentvineTab from "../components/rentvine/RentvineTab";
 
 type DashboardApartment = {
   apt_address: string;
@@ -22,6 +25,7 @@ type DashboardLead = {
   notes: string | null;
   last_outbound_sms: string | null;
   last_outbound_at: string | null;
+  pipeline_status?: string | null;
 };
 
 type AddressCount = {
@@ -29,7 +33,38 @@ type AddressCount = {
   count: number;
 };
 
-type ActiveView = "home" | "human" | "booking";
+type ApartmentPrice = {
+  apt_address: string;
+  current_price: number | null;
+  price_effective_date: string | null;
+  note: string | null;
+  updated_at: string | null;
+};
+
+type ApartmentPriceHistory = {
+  id: number;
+  apt_address: string;
+  previous_price: number | null;
+  new_price: number;
+  effective_date: string;
+  note: string | null;
+  created_at: string | null;
+};
+
+type PriceDraft = {
+  newPrice: string;
+  effectiveDate: string;
+  note: string;
+};
+
+type ChartSeries = {
+  id: string;
+  label: string;
+  color: string;
+  values: Array<{ dateKey: string; value: number | null }>;
+};
+
+type ActiveView = "home" | "leads" | "human" | "booking" | "messages" | "rentvine";
 
 const LIVE_APARTMENTS_STORAGE_KEY = "mission_control_live_apartments";
 
@@ -72,6 +107,93 @@ const MONTH_INDEX: Record<string, number> = {
   december: 12,
 };
 
+const CHART_COLORS = [
+  "#2563eb",
+  "#059669",
+  "#dc2626",
+  "#7c3aed",
+  "#d97706",
+  "#0891b2",
+  "#db2777",
+  "#4f46e5",
+  "#65a30d",
+  "#ea580c",
+];
+
+function normalizeApartmentAddress(address: string | null | undefined) {
+  return String(address || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[.,]/g, " ")
+    .replace(/\bstreet\b/g, "st")
+    .replace(/\bavenue\b/g, "ave")
+    .replace(/\bterrace\b/g, "ter")
+    .replace(/\broad\b/g, "rd")
+    .replace(/\bboulevard\b/g, "blvd")
+    .replace(/\bdrive\b/g, "dr")
+    .replace(/\blane\b/g, "ln")
+    .replace(/\bcourt\b/g, "ct")
+    .replace(/\bplace\b/g, "pl")
+    .replace(/\bhighway\b/g, "hwy")
+    .replace(/\b(?:apartment|apt|unit)\b\s*#?\s*([a-z0-9-]+)/g, "#$1")
+    .replace(/#\s+/g, "#")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function apartmentDisplayScore(address: string) {
+  const lower = address.toLowerCase();
+  let score = address.length;
+
+  if (
+    /\b(street|avenue|terrace|road|boulevard|drive|lane|court|place|highway)\b/.test(
+      lower,
+    )
+  ) {
+    score += 50;
+  }
+
+  if (/\b(apartment|unit)\b/.test(lower)) {
+    score += 25;
+  }
+
+  return score;
+}
+
+function buildCanonicalApartmentList(rows: DashboardApartment[]) {
+  const grouped = new Map<string, string>();
+
+  for (const row of rows) {
+    const address = String(row.apt_address || "").trim();
+    const key = normalizeApartmentAddress(address);
+
+    if (!key) continue;
+
+    const existing = grouped.get(key);
+
+    if (
+      !existing ||
+      apartmentDisplayScore(address) < apartmentDisplayScore(existing)
+    ) {
+      grouped.set(key, address);
+    }
+  }
+
+  return Array.from(grouped.values())
+    .sort((a, b) => a.localeCompare(b))
+    .map((apt_address) => ({ apt_address }));
+}
+
+function canonicalAddressFor(
+  address: string | null | undefined,
+  canonicalByKey: Map<string, string>,
+) {
+  const raw = String(address || "").trim();
+  const key = normalizeApartmentAddress(raw);
+
+  return canonicalByKey.get(key) || raw || "No Address";
+}
+
 function pad2(value: number) {
   return String(value).padStart(2, "0");
 }
@@ -110,7 +232,7 @@ function utcDateFromKey(dateKey: string) {
 
 function dateKeyFromUtcDate(date: Date) {
   return `${date.getUTCFullYear()}-${pad2(date.getUTCMonth() + 1)}-${pad2(
-    date.getUTCDate()
+    date.getUTCDate(),
   )}`;
 }
 
@@ -143,7 +265,7 @@ function getNextMonthStartKey(dateKey: string) {
 function isDateKeyInRange(
   dateKey: string,
   startKey: string,
-  endExclusiveKey: string
+  endExclusiveKey: string,
 ) {
   return dateKey >= startKey && dateKey < endExclusiveKey;
 }
@@ -177,7 +299,11 @@ function getLatestSheetDateKey(leads: DashboardLead[]) {
   return keys[keys.length - 1] || "";
 }
 
-function countLeadsByAddressForDate(leads: DashboardLead[], dateKey: string) {
+function countLeadsByAddressForDate(
+  leads: DashboardLead[],
+  dateKey: string,
+  canonicalByKey: Map<string, string>,
+) {
   const counts = new Map<string, number>();
 
   for (const lead of leads) {
@@ -185,7 +311,7 @@ function countLeadsByAddressForDate(leads: DashboardLead[], dateKey: string) {
 
     if (leadDateKey !== dateKey) continue;
 
-    const address = String(lead.apt_address || "No Address").trim();
+    const address = canonicalAddressFor(lead.apt_address, canonicalByKey);
 
     counts.set(address, (counts.get(address) || 0) + 1);
   }
@@ -254,7 +380,7 @@ function saveStoredLiveApartments(addresses: string[]) {
 
   window.localStorage.setItem(
     LIVE_APARTMENTS_STORAGE_KEY,
-    JSON.stringify(addresses)
+    JSON.stringify(addresses),
   );
 }
 
@@ -262,6 +388,755 @@ function clearStoredLiveApartments() {
   if (typeof window === "undefined") return;
 
   window.localStorage.removeItem(LIVE_APARTMENTS_STORAGE_KEY);
+}
+
+function formatMoney(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return "Not set";
+  }
+
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
+function buildDateKeys(startKey: string, endKey: string, maxDays = 370) {
+  if (!startKey || !endKey || startKey > endKey) return [];
+
+  const keys: string[] = [];
+  let current = startKey;
+
+  while (current <= endKey && keys.length < maxDays) {
+    keys.push(current);
+    current = addDaysToDateKey(current, 1);
+  }
+
+  return keys;
+}
+
+function MultiLineChart({
+  dateKeys,
+  series,
+  valuePrefix = "",
+  stepped = false,
+  emptyLabel,
+}: {
+  dateKeys: string[];
+  series: ChartSeries[];
+  valuePrefix?: string;
+  stepped?: boolean;
+  emptyLabel: string;
+}) {
+  const width = 1100;
+  const height = 330;
+  const padding = { top: 22, right: 24, bottom: 48, left: 64 };
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+
+  const allValues = series
+    .flatMap((item) => item.values.map((point) => point.value))
+    .filter(
+      (value): value is number => value !== null && Number.isFinite(value),
+    );
+
+  if (!dateKeys.length || !series.length || !allValues.length) {
+    return <div className={styles.analyticsEmpty}>{emptyLabel}</div>;
+  }
+
+  const rawMin = Math.min(...allValues);
+  const rawMax = Math.max(...allValues);
+  const spread = Math.max(rawMax - rawMin, stepped ? 100 : 1);
+  const yMin = stepped ? Math.max(0, rawMin - spread * 0.12) : 0;
+  const yMax = rawMax + spread * 0.12;
+
+  const xAt = (index: number) =>
+    padding.left +
+    (dateKeys.length === 1
+      ? plotWidth / 2
+      : (index / (dateKeys.length - 1)) * plotWidth);
+
+  const yAt = (value: number) =>
+    padding.top + ((yMax - value) / Math.max(yMax - yMin, 1)) * plotHeight;
+
+  const tickCount = 5;
+  const yTicks = Array.from({ length: tickCount }, (_, index) => {
+    const ratio = index / (tickCount - 1);
+    return yMax - ratio * (yMax - yMin);
+  });
+
+  const xTickIndexes = Array.from(
+    new Set(
+      Array.from({ length: Math.min(7, dateKeys.length) }, (_, index) =>
+        Math.round(
+          (index / Math.max(Math.min(7, dateKeys.length) - 1, 1)) *
+          (dateKeys.length - 1),
+        ),
+      ),
+    ),
+  );
+
+  function buildPath(values: ChartSeries["values"]) {
+    const segments: string[] = [];
+    let started = false;
+    let previousX = 0;
+    let previousY = 0;
+
+    values.forEach((point, index) => {
+      if (point.value === null || !Number.isFinite(point.value)) {
+        started = false;
+        return;
+      }
+
+      const x = xAt(index);
+      const y = yAt(point.value);
+
+      if (!started) {
+        segments.push(`M ${x} ${y}`);
+        started = true;
+      } else if (stepped) {
+        segments.push(`L ${x} ${previousY} L ${x} ${y}`);
+      } else {
+        segments.push(`L ${x} ${y}`);
+      }
+
+      previousX = x;
+      previousY = y;
+      void previousX;
+    });
+
+    return segments.join(" ");
+  }
+
+  return (
+    <div className={styles.chartScroll}>
+      <svg
+        className={styles.analyticsChart}
+        viewBox={`0 0 ${width} ${height}`}
+        role="img"
+        aria-label="Apartment analytics line chart"
+      >
+        {yTicks.map((tick) => {
+          const y = yAt(tick);
+          return (
+            <g key={tick}>
+              <line
+                x1={padding.left}
+                x2={width - padding.right}
+                y1={y}
+                y2={y}
+                stroke="#e5e7eb"
+                strokeWidth="1"
+              />
+              <text
+                x={padding.left - 10}
+                y={y + 4}
+                textAnchor="end"
+                fontSize="11"
+                fill="#6b7280"
+              >
+                {valuePrefix}
+                {Math.round(tick).toLocaleString()}
+              </text>
+            </g>
+          );
+        })}
+
+        {xTickIndexes.map((index) => (
+          <text
+            key={dateKeys[index]}
+            x={xAt(index)}
+            y={height - 18}
+            textAnchor="middle"
+            fontSize="11"
+            fill="#6b7280"
+          >
+            {formatDateKeyShort(dateKeys[index])}
+          </text>
+        ))}
+
+        {series.map((item) => (
+          <path
+            key={item.id}
+            d={buildPath(item.values)}
+            fill="none"
+            stroke={item.color}
+            strokeWidth="3"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        ))}
+      </svg>
+    </div>
+  );
+}
+
+function ApartmentAnalytics({
+  apartments,
+  activeApartments,
+  leads,
+  canonicalByKey,
+}: {
+  apartments: string[];
+  activeApartments: string[];
+  leads: DashboardLead[];
+  canonicalByKey: Map<string, string>;
+}) {
+  const availableApartments = useMemo(
+    () => (activeApartments.length ? activeApartments : apartments),
+    [activeApartments, apartments],
+  );
+
+  const latestLeadDate = useMemo(() => getLatestSheetDateKey(leads), [leads]);
+  const initialEnd = latestLeadDate || dateKeyFromUtcDate(new Date());
+  const initialStart = addDaysToDateKey(initialEnd, -29);
+
+  const [analyticsMode, setAnalyticsMode] = useState<"leads" | "prices">(
+    "leads",
+  );
+  const [dateFrom, setDateFrom] = useState(initialStart);
+  const [dateTo, setDateTo] = useState(initialEnd);
+  const [visibleApartments, setVisibleApartments] = useState<string[]>([]);
+
+  const [prices, setPrices] = useState<ApartmentPrice[]>([]);
+  const [priceHistory, setPriceHistory] = useState<ApartmentPriceHistory[]>([]);
+  const [priceDrafts, setPriceDrafts] = useState<Record<string, PriceDraft>>(
+    {},
+  );
+  const [loadingPrices, setLoadingPrices] = useState(false);
+  const [savingAddress, setSavingAddress] = useState<string | null>(null);
+  const [priceNotice, setPriceNotice] = useState("");
+  const [priceError, setPriceError] = useState("");
+
+  useEffect(() => {
+    setVisibleApartments((current) => {
+      const availableKeys = new Set(
+        availableApartments.map(normalizeApartmentAddress),
+      );
+      const cleaned = current.filter((address) =>
+        availableKeys.has(normalizeApartmentAddress(address)),
+      );
+
+      return cleaned.length ? cleaned : availableApartments;
+    });
+  }, [availableApartments]);
+
+  useEffect(() => {
+    setPriceDrafts((current) => {
+      const next = { ...current };
+      const today = dateKeyFromUtcDate(new Date());
+
+      for (const address of availableApartments) {
+        if (!next[address]) {
+          next[address] = {
+            newPrice: "",
+            effectiveDate: today,
+            note: "",
+          };
+        }
+      }
+
+      return next;
+    });
+  }, [availableApartments]);
+
+  async function loadPriceData() {
+    setLoadingPrices(true);
+    setPriceError("");
+
+    try {
+      const response = await fetch("/api/apartment-prices", {
+        cache: "no-store",
+      });
+      const json = await response.json();
+
+      if (!response.ok || !json.ok) {
+        throw new Error(json.error || "Failed to load apartment prices");
+      }
+
+      setPrices(json.prices || []);
+      setPriceHistory(json.history || []);
+    } catch (error) {
+      setPriceError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoadingPrices(false);
+    }
+  }
+
+  useEffect(() => {
+    loadPriceData();
+  }, []);
+
+  const dateKeys = useMemo(
+    () => buildDateKeys(dateFrom, dateTo),
+    [dateFrom, dateTo],
+  );
+  const visibleKeys = useMemo(
+    () => new Set(visibleApartments.map(normalizeApartmentAddress)),
+    [visibleApartments],
+  );
+
+  const priceByKey = useMemo(() => {
+    const map = new Map<string, ApartmentPrice>();
+    for (const row of prices) {
+      map.set(normalizeApartmentAddress(row.apt_address), row);
+    }
+    return map;
+  }, [prices]);
+
+  const leadSeries = useMemo<ChartSeries[]>(() => {
+    const counts = new Map<string, Map<string, number>>();
+
+    for (const address of visibleApartments) {
+      counts.set(normalizeApartmentAddress(address), new Map());
+    }
+
+    for (const lead of leads) {
+      const dateKey = dateKeyFromSheetDate(lead.created_at);
+      const address = canonicalAddressFor(lead.apt_address, canonicalByKey);
+      const key = normalizeApartmentAddress(address);
+
+      if (!dateKey || !visibleKeys.has(key)) continue;
+      if (dateKey < dateFrom || dateKey > dateTo) continue;
+
+      const addressCounts = counts.get(key);
+      if (!addressCounts) continue;
+
+      addressCounts.set(dateKey, (addressCounts.get(dateKey) || 0) + 1);
+    }
+
+    return visibleApartments.map((address, index) => {
+      const key = normalizeApartmentAddress(address);
+      const addressCounts = counts.get(key) || new Map<string, number>();
+
+      return {
+        id: key,
+        label: address,
+        color: CHART_COLORS[index % CHART_COLORS.length],
+        values: dateKeys.map((dateKey) => ({
+          dateKey,
+          value: addressCounts.get(dateKey) || 0,
+        })),
+      };
+    });
+  }, [
+    canonicalByKey,
+    dateFrom,
+    dateKeys,
+    dateTo,
+    leads,
+    visibleApartments,
+    visibleKeys,
+  ]);
+
+  const priceSeries = useMemo<ChartSeries[]>(() => {
+    const rowsByKey = new Map<string, ApartmentPriceHistory[]>();
+
+    for (const row of priceHistory) {
+      const key = normalizeApartmentAddress(row.apt_address);
+      const rows = rowsByKey.get(key) || [];
+      rows.push(row);
+      rowsByKey.set(key, rows);
+    }
+
+    for (const rows of rowsByKey.values()) {
+      rows.sort(
+        (a, b) =>
+          a.effective_date.localeCompare(b.effective_date) || a.id - b.id,
+      );
+    }
+
+    return visibleApartments.map((address, index) => {
+      const key = normalizeApartmentAddress(address);
+      const history = rowsByKey.get(key) || [];
+
+      return {
+        id: key,
+        label: address,
+        color: CHART_COLORS[index % CHART_COLORS.length],
+        values: dateKeys.map((dateKey) => {
+          const latest = history
+            .filter((row) => row.effective_date <= dateKey)
+            .at(-1);
+
+          return {
+            dateKey,
+            value: latest ? Number(latest.new_price) : null,
+          };
+        }),
+      };
+    });
+  }, [dateKeys, priceHistory, visibleApartments]);
+
+  const totalLeadsInRange = useMemo(
+    () =>
+      leadSeries.reduce(
+        (total, item) =>
+          total +
+          item.values.reduce((sum, point) => sum + Number(point.value || 0), 0),
+        0,
+      ),
+    [leadSeries],
+  );
+
+  function toggleVisibleApartment(address: string) {
+    setVisibleApartments((current) => {
+      if (current.includes(address)) {
+        return current.filter((item) => item !== address);
+      }
+      return [...current, address];
+    });
+  }
+
+  function setPreset(days: number) {
+    const end = latestLeadDate || dateKeyFromUtcDate(new Date());
+    setDateTo(end);
+    setDateFrom(addDaysToDateKey(end, -(days - 1)));
+  }
+
+  function updateDraft(address: string, patch: Partial<PriceDraft>) {
+    setPriceDrafts((current) => ({
+      ...current,
+      [address]: {
+        newPrice: current[address]?.newPrice || "",
+        effectiveDate:
+          current[address]?.effectiveDate || dateKeyFromUtcDate(new Date()),
+        note: current[address]?.note || "",
+        ...patch,
+      },
+    }));
+  }
+
+  async function saveApartmentPrice(address: string) {
+    const draft = priceDrafts[address];
+    const parsedPrice = Number(
+      String(draft?.newPrice || "").replace(/[$,]/g, ""),
+    );
+
+    setPriceNotice("");
+    setPriceError("");
+
+    if (!Number.isFinite(parsedPrice) || parsedPrice <= 0) {
+      setPriceError(`Enter a valid price for ${address}.`);
+      return;
+    }
+
+    if (!draft?.effectiveDate) {
+      setPriceError(`Choose an effective date for ${address}.`);
+      return;
+    }
+
+    setSavingAddress(address);
+
+    try {
+      const response = await fetch("/api/apartment-prices", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          aptAddress: address,
+          newPrice: parsedPrice,
+          effectiveDate: draft.effectiveDate,
+          note: draft.note,
+        }),
+      });
+      const json = await response.json();
+
+      if (!response.ok || !json.ok) {
+        throw new Error(json.error || "Failed to save apartment price");
+      }
+
+      const result = Array.isArray(json.result) ? json.result[0] : json.result;
+      setPriceNotice(
+        `${address}: ${formatMoney(result?.previous_price)} → ${formatMoney(
+          result?.current_price,
+        )} effective ${draft.effectiveDate}.`,
+      );
+      updateDraft(address, { newPrice: "", note: "" });
+      await loadPriceData();
+    } catch (error) {
+      setPriceError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSavingAddress(null);
+    }
+  }
+
+  return (
+    <section className={styles.analyticsCard}>
+      <div className={styles.analyticsHeader}>
+        <div>
+          <div className={styles.sectionTitle}>Apartment Analytics</div>
+          <div className={styles.sectionSubtitle}>
+            Analyze lead volume and manage dated apartment price changes.
+          </div>
+        </div>
+
+        <div className={styles.analyticsTabs}>
+          <button
+            type="button"
+            className={`${styles.analyticsTab} ${analyticsMode === "leads" ? styles.analyticsTabActive : ""
+              }`}
+            onClick={() => setAnalyticsMode("leads")}
+          >
+            Lead Volume
+          </button>
+          <button
+            type="button"
+            className={`${styles.analyticsTab} ${analyticsMode === "prices" ? styles.analyticsTabActive : ""
+              }`}
+            onClick={() => setAnalyticsMode("prices")}
+          >
+            Price History
+          </button>
+        </div>
+      </div>
+
+      <div className={styles.analyticsControls}>
+        <div className={styles.datePresetGroup}>
+          <button type="button" onClick={() => setPreset(7)}>
+            Last 7 Days
+          </button>
+          <button type="button" onClick={() => setPreset(30)}>
+            Last 30 Days
+          </button>
+          <button type="button" onClick={() => setPreset(90)}>
+            Last 90 Days
+          </button>
+        </div>
+
+        <label className={styles.dateField}>
+          <span>From</span>
+          <input
+            type="date"
+            value={dateFrom}
+            onChange={(event) => setDateFrom(event.target.value)}
+          />
+        </label>
+
+        <label className={styles.dateField}>
+          <span>To</span>
+          <input
+            type="date"
+            value={dateTo}
+            onChange={(event) => setDateTo(event.target.value)}
+          />
+        </label>
+      </div>
+
+      <div className={styles.apartmentToggleRow}>
+        <button
+          type="button"
+          className={styles.toggleUtilityBtn}
+          onClick={() => setVisibleApartments(availableApartments)}
+        >
+          All
+        </button>
+        <button
+          type="button"
+          className={styles.toggleUtilityBtn}
+          onClick={() => setVisibleApartments([])}
+        >
+          None
+        </button>
+
+        {availableApartments.map((address, index) => {
+          const enabled = visibleApartments.includes(address);
+          return (
+            <button
+              key={address}
+              type="button"
+              className={`${styles.apartmentToggleBtn} ${enabled ? styles.apartmentToggleBtnActive : ""
+                }`}
+              onClick={() => toggleVisibleApartment(address)}
+            >
+              <span
+                className={styles.apartmentToggleDot}
+                style={{
+                  background: CHART_COLORS[index % CHART_COLORS.length],
+                }}
+              />
+              {address}
+            </button>
+          );
+        })}
+      </div>
+
+      {analyticsMode === "leads" ? (
+        <div className={styles.analyticsGraphPanel}>
+          <div className={styles.analyticsGraphTop}>
+            <div>
+              <strong>Lead Volume by Apartment</strong>
+              <span>
+                {dateFrom && dateTo
+                  ? `${formatDateKeyShort(dateFrom)} – ${formatDateKeyShort(dateTo)}`
+                  : "Choose a date range"}
+              </span>
+            </div>
+            <div className={styles.analyticsMetric}>
+              <strong>{totalLeadsInRange}</strong>
+              <span>leads in range</span>
+            </div>
+          </div>
+
+          <MultiLineChart
+            dateKeys={dateKeys}
+            series={leadSeries}
+            emptyLabel="Enable at least one apartment to view lead volume."
+          />
+        </div>
+      ) : (
+        <div className={styles.priceAnalyticsLayout}>
+          <div className={styles.priceManagerPanel}>
+            <div className={styles.priceManagerHeader}>
+              <div>
+                <strong>Price Manager</strong>
+                <span>Saving records the effective date in price history.</span>
+              </div>
+              <button
+                type="button"
+                onClick={loadPriceData}
+                disabled={loadingPrices}
+              >
+                {loadingPrices ? "Refreshing..." : "Refresh"}
+              </button>
+            </div>
+
+            {priceNotice && (
+              <div className={styles.priceSuccess}>{priceNotice}</div>
+            )}
+            {priceError && <div className={styles.errorText}>{priceError}</div>}
+
+            <div className={styles.priceManagerList}>
+              {availableApartments.map((address) => {
+                const current = priceByKey.get(
+                  normalizeApartmentAddress(address),
+                );
+                const draft = priceDrafts[address] || {
+                  newPrice: "",
+                  effectiveDate: dateKeyFromUtcDate(new Date()),
+                  note: "",
+                };
+                const parsedDraftPrice = Number(
+                  String(draft.newPrice || "").replace(/[$,]/g, ""),
+                );
+                const currentPrice =
+                  current?.current_price === null ||
+                    current?.current_price === undefined
+                    ? null
+                    : Number(current.current_price);
+                const draftIsValid =
+                  Number.isFinite(parsedDraftPrice) && parsedDraftPrice > 0;
+                const isSameAsCurrent =
+                  draftIsValid &&
+                  currentPrice !== null &&
+                  parsedDraftPrice === currentPrice;
+                const saveDisabled =
+                  savingAddress === address ||
+                  !draftIsValid ||
+                  !draft.effectiveDate ||
+                  isSameAsCurrent;
+
+                return (
+                  <article className={styles.priceEditorRow} key={address}>
+                    <div className={styles.priceEditorIdentity}>
+                      <strong>{address}</strong>
+                      <span>
+                        Current: {formatMoney(current?.current_price)}
+                        {current?.price_effective_date
+                          ? ` · since ${formatDateKeyShort(current.price_effective_date)}`
+                          : ""}
+                      </span>
+                    </div>
+
+                    <label>
+                      <span>New price</span>
+                      <input
+                        type="number"
+                        min="1"
+                        step="50"
+                        placeholder="Enter new price"
+                        value={draft.newPrice}
+                        onChange={(event) =>
+                          updateDraft(address, { newPrice: event.target.value })
+                        }
+                      />
+                    </label>
+
+                    <label>
+                      <span>Effective date</span>
+                      <input
+                        type="date"
+                        value={draft.effectiveDate}
+                        onChange={(event) =>
+                          updateDraft(address, {
+                            effectiveDate: event.target.value,
+                          })
+                        }
+                      />
+                    </label>
+
+                    <label className={styles.priceNoteField}>
+                      <span>Note</span>
+                      <input
+                        type="text"
+                        placeholder="Optional"
+                        value={draft.note}
+                        onChange={(event) =>
+                          updateDraft(address, { note: event.target.value })
+                        }
+                      />
+                    </label>
+
+                    <button
+                      type="button"
+                      className={styles.priceSaveBtn}
+                      disabled={saveDisabled}
+                      onClick={() => saveApartmentPrice(address)}
+                      title={
+                        isSameAsCurrent
+                          ? "Enter a price different from the current price."
+                          : !draftIsValid
+                            ? "Enter a valid new price."
+                            : !draft.effectiveDate
+                              ? "Choose an effective date."
+                              : "Save this price change."
+                      }
+                    >
+                      {savingAddress === address
+                        ? "Saving..."
+                        : isSameAsCurrent
+                          ? "No Price Change"
+                          : "Save Price"}
+                    </button>
+                  </article>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className={styles.analyticsGraphPanel}>
+            <div className={styles.analyticsGraphTop}>
+              <div>
+                <strong>Price History</strong>
+                <span>
+                  Each line carries the saved price forward until the next
+                  change.
+                </span>
+              </div>
+            </div>
+
+            <MultiLineChart
+              dateKeys={dateKeys}
+              series={priceSeries}
+              valuePrefix="$"
+              stepped
+              emptyLabel="Save an apartment price to begin its history graph."
+            />
+          </div>
+        </div>
+      )}
+    </section>
+  );
 }
 
 export default function DashboardPage() {
@@ -300,7 +1175,7 @@ export default function DashboardPage() {
       const leadsRequest = supabase
         .from("dashboard_leads_clean")
         .select(
-          "lead_id, created_at, created_at_ts, lead_name, phone, apt_address, current_status, conversation_stage, needs_human_review_bool, notes, last_outbound_sms, last_outbound_at"
+          "lead_id, created_at, created_at_ts, lead_name, phone, apt_address, current_status, conversation_stage, needs_human_review_bool, notes, last_outbound_sms, last_outbound_at, pipeline_status",
         );
 
       const [apartmentsResponse, leadsResponse] = await Promise.all([
@@ -312,7 +1187,9 @@ export default function DashboardPage() {
         setErrorMessage(apartmentsResponse.error.message);
         setApartments([]);
       } else {
-        setApartments(apartmentsResponse.data || []);
+        setApartments(
+          buildCanonicalApartmentList(apartmentsResponse.data || []),
+        );
       }
 
       if (leadsResponse.error) {
@@ -329,19 +1206,33 @@ export default function DashboardPage() {
     loadDashboardData();
   }, []);
 
+  const canonicalByKey = useMemo(() => {
+    return new Map(
+      apartments.map((apartment) => [
+        normalizeApartmentAddress(apartment.apt_address),
+        apartment.apt_address,
+      ]),
+    );
+  }, [apartments]);
+
   useEffect(() => {
     if (!apartments.length) return;
 
-    const validAddresses = new Set(
-      apartments.map((apartment) => apartment.apt_address)
-    );
+    const canonicalizeSelection = (items: string[]) =>
+      Array.from(
+        new Set(
+          items
+            .map((address) =>
+              canonicalByKey.get(normalizeApartmentAddress(address)),
+            )
+            .filter((address): address is string => Boolean(address)),
+        ),
+      );
 
-    setSelectedApartments((current) =>
-      current.filter((address) => validAddresses.has(address))
-    );
+    setSelectedApartments((current) => canonicalizeSelection(current));
 
     setActiveApartments((current) => {
-      const cleaned = current.filter((address) => validAddresses.has(address));
+      const cleaned = canonicalizeSelection(current);
 
       if (cleaned.length) {
         saveStoredLiveApartments(cleaned);
@@ -351,15 +1242,19 @@ export default function DashboardPage() {
 
       return cleaned;
     });
-  }, [apartments]);
+  }, [apartments, canonicalByKey]);
 
   const filteredLeads = useMemo(() => {
     if (!activeApartments.length) {
       return leads;
     }
 
+    const activeKeys = new Set(
+      activeApartments.map((address) => normalizeApartmentAddress(address)),
+    );
+
     return leads.filter((lead) =>
-      activeApartments.includes(String(lead.apt_address || "").trim())
+      activeKeys.has(normalizeApartmentAddress(lead.apt_address)),
     );
   }, [activeApartments, leads]);
 
@@ -367,8 +1262,9 @@ export default function DashboardPage() {
     return filteredLeads
       .filter((lead) => {
         const isProcessing =
-          String(lead.current_status || "").trim().toLowerCase() ===
-          "processing";
+          String(lead.current_status || "")
+            .trim()
+            .toLowerCase() === "processing";
 
         return isProcessing && !lead.needs_human_review_bool;
       })
@@ -390,6 +1286,11 @@ export default function DashboardPage() {
       count: processingRows.length,
     },
     {
+      label: "Leads",
+      view: "leads" as ActiveView,
+      count: leads.length,
+    },
+    {
       label: "Human Review",
       view: "human" as ActiveView,
       count: humanReviewRows.length,
@@ -397,6 +1298,16 @@ export default function DashboardPage() {
     {
       label: "Booking",
       view: "booking" as ActiveView,
+      count: 0,
+    },
+    {
+      label: "Messages",
+      view: "messages" as ActiveView,
+      count: 0,
+    },
+    {
+      label: "Rentvine",
+      view: "rentvine" as ActiveView,
       count: 0,
     },
   ];
@@ -450,7 +1361,7 @@ export default function DashboardPage() {
       capturedThisMonth,
       processingNow: processingRows.length,
       weekLabel: `${formatDateKeyShort(weekStartKey)} - ${formatDateKeyShort(
-        weekLastDayKey
+        weekLastDayKey,
       )}`,
       monthLabel: formatMonthLabel(monthStartKey),
       weekStartKey,
@@ -466,7 +1377,11 @@ export default function DashboardPage() {
 
     return weekDays.map((dayName, index) => {
       const dateKey = addDaysToDateKey(stats.weekStartKey, index);
-      const addressCounts = countLeadsByAddressForDate(filteredLeads, dateKey);
+      const addressCounts = countLeadsByAddressForDate(
+        filteredLeads,
+        dateKey,
+        canonicalByKey,
+      );
       const total = countTotal(addressCounts);
 
       return {
@@ -476,7 +1391,7 @@ export default function DashboardPage() {
         total,
       };
     });
-  }, [filteredLeads, stats.weekStartKey]);
+  }, [canonicalByKey, filteredLeads, stats.weekStartKey]);
 
   const monthDays = useMemo(() => {
     if (!stats.monthStartKey) return [];
@@ -485,7 +1400,7 @@ export default function DashboardPage() {
     const monthYear = monthStartDate.getUTCFullYear();
     const monthNumber = monthStartDate.getUTCMonth() + 1;
     const daysInMonth = new Date(
-      Date.UTC(monthYear, monthNumber, 0)
+      Date.UTC(monthYear, monthNumber, 0),
     ).getUTCDate();
     const leadingBlanks = monthStartDate.getUTCDay();
 
@@ -506,7 +1421,8 @@ export default function DashboardPage() {
       const dateKey = `${monthYear}-${pad2(monthNumber)}-${pad2(dayNumber)}`;
       const allAddressCounts = countLeadsByAddressForDate(
         filteredLeads,
-        dateKey
+        dateKey,
+        canonicalByKey,
       );
       const addressCounts = allAddressCounts.slice(0, 3);
       const total = countTotal(allAddressCounts);
@@ -522,7 +1438,7 @@ export default function DashboardPage() {
     }
 
     return cells;
-  }, [dashboardTodayKey, filteredLeads, stats.monthStartKey]);
+  }, [canonicalByKey, dashboardTodayKey, filteredLeads, stats.monthStartKey]);
 
   function toggleApartment(address: string) {
     setSelectedApartments((current) => {
@@ -577,9 +1493,7 @@ export default function DashboardPage() {
             <section className={styles.liveCard}>
               <div className={styles.liveGrid}>
                 <div>
-                  <div className={styles.liveTitle}>
-                    All Scraped Apartments
-                  </div>
+                  <div className={styles.liveTitle}>All Scraped Apartments</div>
 
                   {loadingApartments ? (
                     <div className={styles.muted}>Loading apartments...</div>
@@ -595,7 +1509,7 @@ export default function DashboardPage() {
                           <input
                             type="checkbox"
                             checked={selectedApartments.includes(
-                              apartment.apt_address
+                              apartment.apt_address,
                             )}
                             onChange={() =>
                               toggleApartment(apartment.apt_address)
@@ -815,7 +1729,39 @@ export default function DashboardPage() {
                 })}
               </div>
             </section>
+
+            <ApartmentAnalytics
+              apartments={apartments.map((apartment) => apartment.apt_address)}
+              activeApartments={activeApartments}
+              leads={leads}
+              canonicalByKey={canonicalByKey}
+            />
           </>
+        )}
+
+        {activeView === "leads" && (
+          <LeadsTab
+            leads={leads}
+            loading={loadingLeads}
+            onRefresh={async () => {
+              setLoadingLeads(true);
+
+              const { data, error } = await supabase
+                .from("dashboard_leads_clean")
+                .select(
+                  "lead_id, created_at, created_at_ts, lead_name, phone, apt_address, current_status, conversation_stage, needs_human_review_bool, notes, last_outbound_sms, last_outbound_at, pipeline_status",
+                );
+
+              if (error) {
+                setErrorMessage(error.message);
+                setLeads([]);
+              } else {
+                setLeads(data || []);
+              }
+
+              setLoadingLeads(false);
+            }}
+          />
         )}
 
         {activeView === "human" && (
@@ -907,6 +1853,10 @@ export default function DashboardPage() {
             }
           />
         )}
+
+        {activeView === "messages" && <MessagesTab />}
+
+        {activeView === "rentvine" && <RentvineTab />}
       </section>
     </main>
   );

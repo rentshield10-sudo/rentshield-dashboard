@@ -514,3 +514,357 @@
         flex: 1;
     }
 }
+
+.analyticsCard {
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 16px;
+    box-shadow: 0 8px 20px rgba(15, 23, 42, 0.05);
+    padding: 16px;
+    margin-bottom: 20px;
+}
+
+.analyticsHeader,
+.analyticsGraphTop,
+.priceManagerHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+}
+
+.analyticsTabs {
+    display: inline-flex;
+    gap: 6px;
+    padding: 4px;
+    background: #f1f5f9;
+    border-radius: 10px;
+}
+
+.analyticsTab {
+    border: 0;
+    background: transparent;
+    color: #64748b;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 12px;
+    font-weight: 900;
+    cursor: pointer;
+}
+
+.analyticsTabActive {
+    background: white;
+    color: #1d4ed8;
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+}
+
+.analyticsControls {
+    display: flex;
+    align-items: end;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 14px;
+    padding: 12px;
+    background: #f8fafc;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+}
+
+.datePresetGroup {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.datePresetGroup button,
+.toggleUtilityBtn,
+.priceManagerHeader button {
+    border: 1px solid #d1d5db;
+    background: white;
+    color: #374151;
+    border-radius: 9px;
+    min-height: 34px;
+    padding: 0 11px;
+    font-size: 11px;
+    font-weight: 900;
+    cursor: pointer;
+}
+
+.dateField {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    color: #6b7280;
+    font-size: 10px;
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.dateField input,
+.priceEditorRow input {
+    border: 1px solid #d1d5db;
+    border-radius: 9px;
+    min-height: 36px;
+    padding: 7px 9px;
+    background: white;
+    color: #111827;
+    font: inherit;
+    outline: none;
+}
+
+.dateField input:focus,
+.priceEditorRow input:focus {
+    border-color: #2563eb;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+.apartmentToggleRow {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 7px;
+    margin: 12px 0;
+}
+
+.apartmentToggleBtn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid #dbe3ef;
+    background: white;
+    color: #64748b;
+    border-radius: 999px;
+    padding: 7px 10px;
+    font-size: 11px;
+    font-weight: 800;
+    cursor: pointer;
+    opacity: 0.65;
+}
+
+.apartmentToggleBtnActive {
+    color: #111827;
+    border-color: #94a3b8;
+    background: #f8fafc;
+    opacity: 1;
+}
+
+.apartmentToggleDot {
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    flex: 0 0 auto;
+}
+
+.analyticsGraphPanel,
+.priceManagerPanel {
+    border: 1px solid #e5e7eb;
+    border-radius: 14px;
+    background: #fff;
+    padding: 14px;
+}
+
+.analyticsGraphTop>div:first-child,
+.priceManagerHeader>div:first-child {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.analyticsGraphTop strong,
+.priceManagerHeader strong {
+    font-size: 13px;
+}
+
+.analyticsGraphTop span,
+.priceManagerHeader span {
+    color: #6b7280;
+    font-size: 11px;
+}
+
+.analyticsMetric {
+    text-align: right;
+}
+
+.analyticsMetric strong {
+    display: block;
+    font-size: 24px;
+    line-height: 1;
+}
+
+.analyticsMetric span {
+    display: block;
+    margin-top: 4px;
+}
+
+.chartScroll {
+    width: 100%;
+    overflow-x: auto;
+    margin-top: 10px;
+}
+
+.analyticsChart {
+    width: 100%;
+    min-width: 760px;
+    height: auto;
+    display: block;
+}
+
+.analyticsEmpty {
+    min-height: 260px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    color: #94a3b8;
+    font-size: 12px;
+    border: 1px dashed #dbe3ef;
+    border-radius: 12px;
+    margin-top: 12px;
+    background: #fbfdff;
+}
+
+.priceAnalyticsLayout {
+    display: grid;
+    grid-template-columns: minmax(440px, 0.95fr) minmax(520px, 1.25fr);
+    gap: 12px;
+    align-items: start;
+}
+
+.priceManagerList {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 12px;
+    max-height: 560px;
+    overflow-y: auto;
+    padding-right: 3px;
+}
+
+.priceEditorRow {
+    display: grid;
+    grid-template-columns: minmax(180px, 1.2fr) 115px 150px minmax(130px, 0.8fr) 105px;
+    gap: 8px;
+    align-items: end;
+    border: 1px solid #e5e7eb;
+    border-radius: 11px;
+    padding: 10px;
+    background: #f8fafc;
+}
+
+.priceEditorIdentity {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.priceEditorIdentity strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+}
+
+.priceEditorIdentity span {
+    color: #64748b;
+    font-size: 10px;
+}
+
+.priceEditorRow label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    color: #6b7280;
+    font-size: 9px;
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.priceEditorRow input {
+    width: 100%;
+    min-width: 0;
+    font-size: 11px;
+    text-transform: none;
+    letter-spacing: normal;
+}
+
+.priceSaveBtn {
+    border: 0;
+    border-radius: 9px;
+    min-height: 36px;
+    padding: 0 10px;
+    background: #2563eb;
+    color: white;
+    font-size: 11px;
+    font-weight: 900;
+    cursor: pointer;
+}
+
+.priceSaveBtn:disabled,
+.priceManagerHeader button:disabled {
+    opacity: 0.55;
+    cursor: wait;
+}
+
+.priceSuccess {
+    color: #166534;
+    background: #dcfce7;
+    border: 1px solid #bbf7d0;
+    border-radius: 9px;
+    padding: 8px;
+    margin-top: 10px;
+    font-size: 11px;
+    font-weight: 800;
+}
+
+@media (max-width: 1280px) {
+    .priceAnalyticsLayout {
+        grid-template-columns: 1fr;
+    }
+
+    .priceEditorRow {
+        grid-template-columns: minmax(180px, 1.2fr) 115px 150px minmax(140px, 1fr) 105px;
+    }
+}
+
+@media (max-width: 900px) {
+
+    .analyticsHeader,
+    .analyticsGraphTop,
+    .priceManagerHeader {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .analyticsTabs {
+        width: 100%;
+    }
+
+    .analyticsTab {
+        flex: 1;
+    }
+
+    .priceEditorRow {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .priceEditorIdentity,
+    .priceNoteField,
+    .priceSaveBtn {
+        grid-column: 1 / -1;
+    }
+}
+
+@media (max-width: 560px) {
+    .priceEditorRow {
+        grid-template-columns: 1fr;
+    }
+
+    .priceEditorIdentity,
+    .priceNoteField,
+    .priceSaveBtn {
+        grid-column: auto;
+    }
+}

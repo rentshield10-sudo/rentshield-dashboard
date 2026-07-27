@@ -1,0 +1,1262 @@
+# Mission Control / Quo SMS Automation Handoff
+
+**Date prepared:** 2026-07-06  
+**Purpose:** Paste this into a new chat/session tomorrow so the project context is already available.  
+**Current next step:** Add auto-reply logic that sends the next booking/showing schedule only when a lead replies positively to the requirements SMS. Non-positive, ambiguous, or unsafe cases go to Human Review.
+
+---
+
+## 1. High-Level System Overview
+
+There are currently **3 Node/server apps** involved in the leasing automation workflow.
+
+### 1. Template Builder Server
+
+**Purpose:** Manage address/property data and SMS templates.
+
+Known behavior from the current UI:
+
+- It has a property/address list.
+- It allows editing saved addresses.
+- It stores apartment details such as:
+  - address
+  - rent price
+  - bedrooms
+  - contact number
+  - city/state
+  - schedule label/time
+- It has template previews for messages such as:
+  - initial outreach
+  - showing invitation
+  - appointment confirmation
+  - requirements request
+  - missed call reply
+  - same-day confirmation
+- It currently appears to be the place where template text is visually managed, but Supabase `public.templates` is still empty.
+
+Important implication:
+
+> For now, the real template source may still be in the Template Builder/local UI/code, not Supabase `public.templates`.
+
+---
+
+### 2. Local Auto-Click / Quo Web Sender Server
+
+**Purpose:** Send SMS through the Quo/OpenPhone web UI by browser automation/clicking, instead of sending directly through the paid API.
+
+Why this exists:
+
+- Quo/OpenPhone charges per SMS send through API usage.
+- The local auto-click sender uses the web UI and clicks the same elements a user would click.
+- This sender is already working.
+
+Important behavior:
+
+- This server should **not receive multiple direct webhook requests at the same time**.
+- Messages must go through a queue first.
+- The queue ensures messages are processed one at a time.
+
+Known working auto-click result shape from `message_send_jobs.anyclick_result`:
+
+```json
+{
+  "success": true,
+  "flow_id": "flow_1776996361867_nxr811",
+  "message": "Flow completed successfully",
+  "current_url": "https://my.quo.com/inbox/PNAO2aXSml/c/...",
+  "inputs_used": {
+    "phone": "+19083576619",
+    "message": "We are able to show the unit tomorrow Wednesday 6PM at 242 Hillcrest Ter, Roselle, NJ 07203, will you join?",
+    "parameters": "+19083576619"
+  },
+  "steps_executed": 5
+}
+```
+
+Known click steps include:
+
+- Select primary inbox: `Primary(201) 350-1990`
+- Click `Send a message`
+- Fill participant input
+- Fill message input
+- Click send message
+
+Important queue payload shape already seen:
+
+```json
+{
+  "inputs": {
+    "phone": "+19083576619",
+    "message": "SMS text here",
+    "parameters": "+19083576619"
+  }
+}
+```
+
+Important rule:
+
+> The webhook/automation logic should insert into `public.message_send_jobs`. The worker/auto-click sender should claim and process queued jobs. The webhook should not directly call the auto-click sender for every inbound event.
+
+---
+
+### 3. Main Mission Control Dashboard Server
+
+**Local app:** `localhost:3002`  
+**Purpose:** Main leasing dashboard and the app we will continue updating.
+
+Current sections in the sidebar:
+
+- Home
+- Leads
+- Human Review
+- Booking
+- Messages
+
+Known currently working areas:
+
+#### Leads Tab
+
+- Shows lead pipeline data.
+- Has filters for pipeline/status:
+  - All
+  - Follow-up Pool
+  - New Lead
+  - Contacted
+  - Requirements Sent
+  - Schedule Sent
+  - Booked
+  - Confirmed
+  - Showed
+  - No Show
+  - Reschedule Needed
+  - Cancelled
+  - Nurture
+  - Lost
+- Lead rows include lead name, phone, apartment, current status, pipeline stage/status, last SMS, and created date.
+
+#### Human Review Workstation
+
+- Shows review items on the left.
+- Allows selecting a lead/conversation needing review.
+- Shows recent messages.
+- Shows matching templates for the selected lead/property.
+- Allows manual reply or clicking a template.
+- Can add message to queue.
+- Queued messages are sent by the local auto-click sender.
+
+Known important detail:
+
+> The human-review manual-send flow is already more advanced than the older handoff says.
+
+#### Booking Tab
+
+- Already working.
+- You manually add showing schedules here.
+- This manual schedule data should be the source of truth for automation.
+- Normal showing days are usually Monday, Wednesday, Friday, Saturday, but this must **not** be hardcoded because you edit schedules manually.
+
+#### Messages / Automation Monitor
+
+- Shows automation state and queue summary.
+- Current status can show `Needs Human Review`.
+- Polling interval is editable, currently 2 minutes.
+- Queue summary shows counts like pending, running, sent, failed, human review.
+
+---
+
+## 2. Current Business Flow
+
+Long-term leasing flow:
+
+```text
+Zillow lead
+→ intro message is sent
+→ lead replies in Quo/OpenPhone
+→ webhook captures inbound SMS
+→ Supabase stores message/decision state
+→ automation decides what to do
+→ eligible replies create queued SMS jobs
+→ local auto-click sender sends queued SMS
+→ Supabase updates lead pipeline
+→ ambiguous/unsafe replies go to Human Review
+```
+
+Current working automation already done:
+
+```text
+Lead receives intro SMS
+→ lead replies
+→ system captures inbound reply
+→ system auto-sends requirements SMS
+```
+
+Current next automation step:
+
+```text
+Lead receives requirements SMS
+→ lead replies positively / qualifies
+→ system finds next valid Booking tab schedule
+→ system queues showing invitation SMS
+→ pipeline updates to schedule_sent
+```
+
+If the reply is not clearly positive or safe:
+
+```text
+Inbound requirements reply
+→ no auto-send
+→ Human Review
+```
+
+---
+
+## 3. Important Logic Correction
+
+There is a suspected issue in the existing webhook logic.
+
+The logic may currently be deciding what to reply based too much on:
+
+```text
+phone number + inbound message text
+```
+
+It should instead decide based on:
+
+```text
+normalized phone
++ exact matched lead
++ exact apartment/property
++ conversation_id / external_conversation_id when available
++ latest outbound message for that exact lead/property/conversation
++ latest outbound template_key / intent
++ pipeline_status
++ conversation_stage
++ stop_automation / human review flags
+```
+
+Important risk:
+
+> If the same phone number has multiple apartment inquiries, choosing the last outbound by phone only can select the wrong context and send the wrong next message.
+
+Safer rule:
+
+```text
+0 matching eligible leads → Human Review
+1 matching eligible lead → continue automation
+2+ matching eligible leads → Human Review
+```
+
+---
+
+## 4. Booking Automation Rule for Tomorrow
+
+The next feature is **not booking an appointment immediately**. The next feature is sending the next showing schedule after a positive requirements reply.
+
+### Trigger
+
+Only trigger this flow when:
+
+```text
+lead replies to the requirements SMS
+```
+
+The system should confirm this by checking one or more of:
+
+- last outbound template was `02_requirements_request_v1`
+- last outbound intent was requirements-related
+- lead `pipeline_status = requirements_sent`
+- lead `conversation_stage = requirements_sent` or equivalent
+
+### Required Conditions
+
+Before auto-sending the booking/showing schedule:
+
+```text
+- inbound message is from the lead, not outgoing/delivered event
+- message was not already processed
+- external_message_id is not duplicated
+- exactly one safe lead/property match exists
+- lead is not stopped from automation
+- lead is not already in human review
+- lead is not already booked/confirmed/showed/lost/cancelled
+- last outbound context is requirements SMS
+- inbound reply is clearly positive / qualified enough
+- a future available schedule exists in the Booking tab table
+```
+
+### If Positive
+
+```text
+find next future schedule
+→ compose showing invitation message
+→ insert pending job in message_send_jobs
+→ update lead pipeline to schedule_sent
+```
+
+### If Not Positive / Ambiguous
+
+```text
+send nothing automatically
+→ create/update Human Review item
+→ mark lead/message as needing human review
+```
+
+---
+
+## 5. Booking Schedule Source of Truth
+
+There are two booking table sets:
+
+### Old/Stale Tables
+
+```text
+public.showing_schedules
+public.showing_appointments
+```
+
+These appear to be older and stale:
+
+```text
+showing_schedules latest showing_at: 2026-05-22
+showing_appointments latest created/updated: 2026-05-22
+```
+
+### Current Dashboard Booking Tables
+
+```text
+public.dashboard_showing_schedules
+public.dashboard_showing_appointments
+```
+
+These are newer and match the working dashboard Booking tab:
+
+```text
+dashboard_showing_schedules latest showing_at: 2026-06-12
+dashboard_showing_schedules latest created_at: 2026-06-11
+dashboard_showing_appointments latest showing_at: 2026-06-12
+dashboard_showing_appointments latest created_at: 2026-06-11
+```
+
+Important conclusion:
+
+> The automation should use `public.dashboard_showing_schedules` and `public.dashboard_showing_appointments`, not the older `showing_*` tables.
+
+Important warning:
+
+> Existing RPCs like `book_showing_appointment` and `booking_update` appear to write to the old `showing_schedules` / `showing_appointments` tables. Do not reuse those for the new dashboard automation unless they are rewritten or confirmed to match the Booking tab.
+
+---
+
+## 6. Booking Schedule Selection Rule
+
+The normal schedule pattern is:
+
+```text
+Monday, Wednesday, Friday, Saturday
+```
+
+But this must **not** be hardcoded.
+
+Reason:
+
+- The Booking tab is manually edited.
+- Sometimes the schedule changes.
+- Automation should respect whatever is currently saved in the Booking tab.
+
+Recommended schedule lookup:
+
+```text
+Find the next available dashboard_showing_schedules row
+for the lead's apt_address
+where showing_at is in the future
+and schedule_status is not cancelled/full
+and open slots remain
+```
+
+Also discussed rule:
+
+> If today is already the showing schedule date, a new lead who replies today should receive the **next** schedule date, not today's same-day schedule.
+
+Safer version:
+
+```text
+showing_at date must be greater than today's date in America/New_York
+```
+
+This avoids inviting new leads into a same-day showing after the day has already started.
+
+---
+
+## 7. Message Queue Rule
+
+The auto-reply system should never blast the local sender with direct simultaneous requests.
+
+Correct design:
+
+```text
+Webhook / decision logic
+→ insert pending row into public.message_send_jobs
+→ return quickly
+
+Queue worker / local sender
+→ claim one pending job
+→ call local auto-click Node server
+→ update job status
+→ insert outbound message record
+→ update lead pipeline/last outbound fields
+```
+
+This preserves queue behavior and prevents the local browser sender from receiving multiple concurrent requests.
+
+Known `message_send_jobs` fields from samples:
+
+```text
+id
+phone
+lead_id
+apt_address
+message_text
+template_key
+source
+status
+escalation_id
+anyclick_payload
+anyclick_result
+sent_at
+error
+created_at
+updated_at
+```
+
+Known statuses from usage:
+
+```text
+pending
+running
+sent
+failed
+```
+
+Known source values:
+
+```text
+human_review
+auto_booking (recommended for new automation)
+```
+
+Known indexes:
+
+```text
+message_send_jobs_pkey
+message_send_jobs_phone_idx
+message_send_jobs_escalation_idx
+message_send_jobs_status_created_idx
+```
+
+Recommended new queued booking invitation row:
+
+```text
+phone = lead phone
+lead_id = dashboard lead_id text
+apt_address = matched apartment address
+message_text = showing invitation text
+template_key = 03_showing_invitation_v1
+source = auto_booking
+status = pending
+anyclick_payload.inputs.phone = phone
+anyclick_payload.inputs.message = message_text
+anyclick_payload.inputs.parameters = phone
+```
+
+---
+
+## 8. Supabase Core Tables Identified
+
+### Main Operational Tables
+
+```text
+public.leads
+public.properties
+public.conversations
+public.messages
+public.ai_decisions
+public.human_escalations
+public.message_send_jobs
+public.message_automation_state
+public.dashboard_leads
+public.dashboard_leads_clean
+public.dashboard_showing_schedules
+public.dashboard_showing_appointments
+public.dashboard_schedule_templates
+public.dashboard_schedule_template_items
+public.templates
+```
+
+### Backup/Old Tables
+
+```text
+public.backup_conversations_before_id_fix_20260528
+public.backup_messages_before_id_fix_20260528
+public.backup_properties_before_id_fix_20260528
+public.backup_leads_before_id_fix_20260528
+public.backup_showing_appointments_before_id_fix_20260528
+public.backup_ai_decisions_before_id_fix_20260528
+public.backup_human_escalations_before_id_fix_20260528
+public.backup_properties_created_at_may_2026_fix
+public.backup_leads_created_at_may_2026_fix
+```
+
+### Empty/Unused or Not Currently Primary
+
+```text
+public.dashboard_rows = 0 rows
+public.templates = 0 rows
+```
+
+---
+
+## 9. Table Counts Observed
+
+Approximate row counts observed from Supabase:
+
+```text
+ai_decisions: 932
+dashboard_leads: 604
+messages: 577
+conversations: 316
+properties: 314
+leads: 302
+human_escalations: 134
+message_send_jobs: 40
+dashboard_showing_appointments: 26
+dashboard_showing_schedules: 25
+showing_schedules: 24
+showing_appointments: 13
+dashboard_schedule_template_items: 13
+dashboard_schedule_templates: 2
+message_automation_state: 1
+templates: 0
+dashboard_rows: 0
+```
+
+---
+
+## 10. Key Relationships Identified
+
+### Core Lead/Property/Conversation/Message Graph
+
+```text
+properties.lead_id → leads.id
+conversations.lead_id → leads.id
+conversations.property_id → properties.id
+messages.conversation_id → conversations.id
+messages.lead_id → leads.id
+messages.property_id → properties.id
+messages.duplicate_of → messages.id
+```
+
+### AI Decisions
+
+```text
+ai_decisions.message_id → messages.id
+ai_decisions.conversation_id → conversations.id
+ai_decisions.lead_id → leads.id
+ai_decisions.property_id → properties.id
+ai_decisions.matched_template_id → templates.id
+```
+
+### Human Review
+
+```text
+human_escalations.message_id → messages.id
+human_escalations.conversation_id → conversations.id
+human_escalations.lead_id → leads.id
+human_escalations.property_id → properties.id
+```
+
+### Message Queue
+
+```text
+message_send_jobs.escalation_id → human_escalations.id
+```
+
+### Dashboard Booking Tables
+
+```text
+dashboard_showing_appointments.schedule_id → dashboard_showing_schedules.id
+```
+
+### Old Booking Tables
+
+```text
+showing_appointments.showing_schedule_id → showing_schedules.id
+showing_appointments.lead_id → leads.id
+showing_appointments.property_id → properties.id
+showing_appointments.conversation_id → conversations.id
+showing_schedules.property_id → properties.id
+```
+
+---
+
+## 11. Important Constraints and Indexes
+
+### Pipeline Status Check
+
+`public.leads` and `public.dashboard_leads` both have a pipeline status check allowing:
+
+```text
+new_lead
+contacted
+requirements_sent
+schedule_sent
+booked
+confirmed
+showed
+no_show
+reschedule_needed
+cancelled
+nurture
+lost
+```
+
+### Unique Message Dedupe
+
+`public.messages.external_message_id` has a unique constraint:
+
+```text
+messages_external_message_id_key UNIQUE (external_message_id)
+```
+
+Important implication:
+
+> Webhook inserts should dedupe/upsert by `external_message_id`.
+
+### Useful Message Indexes
+
+```text
+idx_messages_conversation_id
+idx_messages_external_message_id
+idx_messages_phone
+messages_external_message_id_key
+```
+
+### Useful Dashboard Lead Indexes
+
+```text
+dashboard_leads_phone_idx
+dashboard_leads_lead_id_idx
+dashboard_leads_apt_address_idx
+dashboard_leads_current_status_idx
+dashboard_leads_needs_human_review_idx
+dashboard_leads_created_at_idx
+```
+
+### Useful Booking Indexes
+
+```text
+dashboard_showing_schedules_apt_address_idx
+dashboard_showing_schedules_showing_at_idx
+dashboard_showing_appointments_phone_idx
+dashboard_showing_appointments_schedule_id_idx
+dashboard_showing_appointments_showing_at_idx
+```
+
+---
+
+## 12. Important Table Notes
+
+### `public.dashboard_leads`
+
+This table is used heavily by the dashboard.
+
+Known columns include:
+
+```text
+lead_id text
+created_at text
+lead_name text
+phone text
+apt_address text
+source text
+current_status text
+conversation_stage text
+last_inbound_sms text
+last_inbound_at text
+last_outbound_sms text
+last_outbound_at text
+selected_slot text
+needs_human_review text
+stop_automation text
+notes text
+imported_at timestamptz
+pipeline_stage text default 'new_lead'
+appointment_status text
+confirmation_status text
+attendance_status text
+showing_at text
+last_pipeline_update_at text
+updated_at timestamptz
+pipeline_status text default 'new_lead'
+```
+
+Important type issue:
+
+> Several timestamp-like fields are text in `dashboard_leads`, so updates often need `now()::text`.
+
+### `public.dashboard_leads_clean`
+
+This is a view used by the dashboard for cleaner typed fields.
+
+Known useful columns:
+
+```text
+created_at_ts timestamptz
+last_inbound_at_ts timestamptz
+last_outbound_at_ts timestamptz
+needs_human_review_bool boolean
+stop_automation_bool boolean
+pipeline_status text
+```
+
+### `public.messages`
+
+Purpose:
+
+- Stores inbound/outbound SMS history.
+- Used for dedupe and automation context.
+
+Known important columns from handoff and constraints:
+
+```text
+id
+created_at
+conversation_id
+lead_id
+property_id
+phone
+channel
+direction
+message_text
+external_message_id
+external_conversation_id
+processed
+intent
+template_key
+duplicate_of
+```
+
+Important rule:
+
+> Latest outbound should be selected by exact lead/property/conversation context when possible, not only by phone.
+
+### `public.ai_decisions`
+
+Purpose:
+
+- Logs automation decisions.
+- Has many records from webhook handling.
+- Some rows show outgoing/delivered webhook events being ignored.
+
+Known columns:
+
+```text
+id
+created_at
+message_id
+conversation_id
+lead_id
+property_id
+intent
+confidence
+matched_template_id
+decision
+reply_text
+needs_human
+human_reason
+should_send
+sent
+error
+model_used
+prompt_version
+```
+
+Observed examples:
+
+```text
+decision = webhook_ignored
+decision = confirmation_inbox_message_not_processed_by_requirements_flow
+model_used = rule_based
+prompt_version = message_automation_v1
+```
+
+### `public.human_escalations`
+
+Purpose:
+
+- Stores items needing human review.
+- Links to message/conversation/lead/property.
+- Queue jobs can link back to an escalation.
+
+### `public.message_send_jobs`
+
+Purpose:
+
+- Real send queue for the local auto-click sender.
+- Already used by Human Review.
+- Should also be used by new auto-booking schedule replies.
+
+Known sample row:
+
+```text
+source = human_review
+status = sent
+template_key = 03_showing_invitation_v1
+message_text = We are able to show the unit tomorrow Wednesday 6PM...
+anyclick_payload.inputs.phone = +19083576619
+anyclick_payload.inputs.message = same SMS text
+anyclick_payload.inputs.parameters = +19083576619
+```
+
+### `public.message_automation_state`
+
+Purpose:
+
+- Stores automation monitor status.
+
+Known sample row:
+
+```text
+id = main
+status = human_review
+polling_enabled = false
+interval_minutes = 2
+last_checked_at = 2026-07-05T17:36:37.13+00:00
+updated_at = 2026-07-06T18:32:12.146+00:00
+```
+
+### `public.templates`
+
+Purpose intended:
+
+- Store SMS templates in Supabase.
+
+Current state:
+
+```text
+0 rows
+```
+
+Important implication:
+
+> Do not assume templates are already in Supabase. Current templates may still be in the Template Builder server/UI/code. The requirements and showing invitation templates need to be copied/synced later.
+
+---
+
+## 13. Booking Tables
+
+### `public.dashboard_showing_schedules`
+
+Current source of truth for Booking tab schedules.
+
+Known important columns:
+
+```text
+id bigint
+apt_address text
+showing_at timestamptz
+schedule_status text default 'available'
+max_slots integer default 100
+created_at timestamptz
+updated_at timestamptz
+```
+
+Purpose:
+
+- Stores manually created schedule dates/times from the Booking tab.
+- Automation should read this table to choose the next showing schedule.
+
+### `public.dashboard_showing_appointments`
+
+Current source of truth for dashboard booking appointments.
+
+Known columns include:
+
+```text
+id bigint
+schedule_id bigint
+lead_id text
+lead_name text
+phone text
+apt_address text
+showing_at timestamptz
+appointment_status text default 'booked'
+confirmation_status text default 'pending_confirmation'
+attendance_status text
+created_at timestamptz
+updated_at timestamptz
+```
+
+Purpose:
+
+- Stores appointments booked against dashboard schedules.
+
+Important:
+
+> For tomorrow's immediate feature, we are probably sending the schedule invitation first, not creating the appointment immediately. Appointment creation should happen after the lead accepts/confirms the schedule invitation.
+
+---
+
+## 14. Current Template Flow / Template Keys
+
+Known template keys/names:
+
+```text
+01_initial_outreach_intro_v1
+02_requirements_request_v1
+03_showing_invitation_v1
+04_appointment_confirmed_v1
+05_same_day_confirmation_v1
+06_still_interested_followup_v1
+07_keep_posted_schedule_v1
+08_missed_call_reply_v1
+09_only_time_available_v1
+```
+
+Current working completed automation:
+
+```text
+01_initial_outreach_intro_v1
+→ inbound lead reply
+→ 02_requirements_request_v1 is sent
+```
+
+Next automation to add:
+
+```text
+02_requirements_request_v1
+→ positive/qualified inbound reply
+→ 03_showing_invitation_v1 is queued/sent with next Booking tab schedule
+```
+
+Later automation:
+
+```text
+03_showing_invitation_v1
+→ lead confirms attendance
+→ appointment row is created
+→ pipeline moves to booked
+→ 04_appointment_confirmed_v1 can be sent
+```
+
+---
+
+## 15. Pipeline State Plan
+
+### After Intro Sent
+
+```text
+current_status = contacted
+conversation_stage = intro_sent
+pipeline_status may still be new_lead or contacted depending on sync
+```
+
+Known old issue:
+
+> Many leads had `current_status = contacted`, `conversation_stage = intro_sent`, but `pipeline_status = new_lead`. Therefore old intro-reply logic should not rely only on `pipeline_status = contacted`.
+
+### After Requirements Sent
+
+Expected state:
+
+```text
+pipeline_status = requirements_sent
+conversation_stage = requirements_sent
+last_outbound_sms = requirements template text
+last_outbound_at = now
+```
+
+### After Schedule Invitation Sent
+
+Expected state:
+
+```text
+pipeline_status = schedule_sent
+conversation_stage = schedule_sent
+last_inbound_sms = lead requirements reply
+last_inbound_at = now
+last_outbound_sms = showing invitation text
+last_outbound_at = now
+needs_human_review = false
+```
+
+### After Lead Accepts Showing Invitation
+
+Expected state:
+
+```text
+pipeline_status = booked
+conversation_stage = booked or appointment_booked
+appointment_status = booked
+confirmation_status = pending_confirmation or confirmed
+selected_slot/showing_at = chosen showing time
+```
+
+### After Confirmation
+
+Expected state:
+
+```text
+pipeline_status = confirmed
+appointment_status = confirmed
+confirmation_status = confirmed
+```
+
+### After Showing Outcome
+
+Possible states:
+
+```text
+pipeline_status = showed
+pipeline_status = no_show
+pipeline_status = reschedule_needed
+pipeline_status = cancelled
+pipeline_status = lost
+pipeline_status = nurture
+```
+
+---
+
+## 16. Safe Decision Tree for Tomorrow
+
+Use this as the target behavior for adding booking schedule auto-reply.
+
+```text
+Inbound Quo/OpenPhone webhook received
+↓
+Ignore if event is outgoing/delivered or not an inbound customer message
+↓
+Extract:
+- external_message_id
+- external_conversation_id
+- direction
+- body
+- from/to phone
+- phoneNumberId
+- createdAt
+↓
+Dedupe using messages.external_message_id
+↓
+Normalize customer phone to last 10 digits
+↓
+Find matching lead/property/conversation
+↓
+If no match → Human Review
+If multiple possible active matches → Human Review
+If one safe match → continue
+↓
+Fetch latest outbound for exact context:
+- lead_id
+- property_id / apt_address
+- conversation_id / external_conversation_id when available
+↓
+If latest outbound was requirements template
+AND lead pipeline/conversation stage is requirements_sent
+AND inbound reply is positive/qualified
+↓
+Find next available dashboard schedule for that apt_address
+↓
+If schedule found:
+- compose showing invitation text
+- insert message_send_jobs pending row
+- update pipeline to schedule_sent
+- log ai_decisions
+↓
+If no schedule found:
+- Human Review reason = no_future_schedule
+↓
+If reply not positive/qualified:
+- Human Review reason = requirements_reply_not_clearly_positive
+```
+
+---
+
+## 17. Human Review Fallback Reasons to Use
+
+Recommended reason strings:
+
+```text
+no_matching_lead
+multiple_matching_leads
+automation_stopped
+lead_already_human_review
+lead_already_booked_or_closed
+latest_outbound_not_requirements
+requirements_reply_not_clearly_positive
+no_future_schedule
+schedule_full
+missing_phone
+missing_message_body
+duplicate_message
+unknown_error
+```
+
+---
+
+## 18. Schedule Invitation Text Pattern
+
+Existing human-review sample:
+
+```text
+We are able to show the unit tomorrow Wednesday 6PM at 242 Hillcrest Ter, Roselle, NJ 07203, will you join?
+```
+
+For automation, generate from the selected `dashboard_showing_schedules` row.
+
+Example:
+
+```text
+We are able to show the unit Wednesday 6PM at 242 Hillcrest Ter, Roselle, NJ 07203, will you join?
+```
+
+If the schedule is tomorrow, it can include:
+
+```text
+tomorrow Wednesday 6PM
+```
+
+Important:
+
+> Use the schedule from the Booking tab, not hardcoded weekdays.
+
+---
+
+## 19. What Not To Do Tomorrow
+
+Do **not**:
+
+```text
+- hardcode Monday/Wednesday/Friday/Saturday as the real schedule source
+- send directly to the local auto-click sender from every webhook
+- reuse old showing_schedules RPCs without checking/rewrite
+- choose last outbound by phone only when multiple inquiries may exist
+- create appointment immediately after requirements reply
+- auto-send if the reply is not clearly positive
+- auto-send if no future Booking tab schedule exists
+- assume Supabase templates are populated
+```
+
+---
+
+## 20. What To Build Tomorrow
+
+Main task:
+
+```text
+Add auto-reply for sending booking schedule if and only if lead replies positively to the requirements template.
+```
+
+Implementation target:
+
+```text
+Requirements reply webhook
+→ capture inbound
+→ classify positive/negative/ambiguous
+→ use dashboard_showing_schedules to find next future available schedule
+→ insert pending message_send_jobs row for 03_showing_invitation_v1
+→ update lead pipeline to schedule_sent
+→ non-positive or unsafe cases go to Human Review
+```
+
+Suggested implementation order:
+
+1. Inspect existing webhook/automation code that currently handles intro reply → requirements SMS.
+2. Identify where it decides template/intent.
+3. Add a new branch for latest outbound = requirements template.
+4. Add safe lead/context lookup using exact context, not phone-only if possible.
+5. Add schedule lookup from `dashboard_showing_schedules`.
+6. Add queue insert into `message_send_jobs`, not direct sender call.
+7. Update lead state to `schedule_sent` only after queue row is created.
+8. Log decision in `ai_decisions`.
+9. Human Review fallback for all unsafe cases.
+10. Test with one controlled lead/phone first.
+
+---
+
+## 21. Queries/Checks That Were Useful
+
+### Confirm Current Booking Source
+
+Observed result:
+
+```text
+showing_schedules: latest showing_at 2026-05-22
+dashboard_showing_schedules: latest showing_at 2026-06-12
+showing_appointments: latest created/updated 2026-05-22
+dashboard_showing_appointments: latest created/updated 2026-06-11
+```
+
+Conclusion:
+
+```text
+dashboard_showing_schedules/dashboard_showing_appointments are current.
+```
+
+### Next Schedule Lookup Concept
+
+```sql
+select
+  s.id as schedule_id,
+  s.apt_address,
+  s.showing_at,
+  to_char(s.showing_at at time zone 'America/New_York', 'FMDay FMHH12:MI AM') as sms_schedule_label,
+  s.schedule_status,
+  s.max_slots,
+  count(a.id) filter (
+    where coalesce(a.appointment_status, '') not in ('cancelled', 'canceled')
+  ) as active_bookings,
+  coalesce(s.max_slots, 100) - count(a.id) filter (
+    where coalesce(a.appointment_status, '') not in ('cancelled', 'canceled')
+  ) as open_slots
+from public.dashboard_showing_schedules s
+left join public.dashboard_showing_appointments a
+  on a.schedule_id = s.id
+where lower(trim(s.apt_address)) = lower(trim(:apt_address))
+  and (s.showing_at at time zone 'America/New_York')::date
+      > (now() at time zone 'America/New_York')::date
+  and coalesce(s.schedule_status, 'available') not in ('cancelled', 'canceled', 'full')
+group by
+  s.id,
+  s.apt_address,
+  s.showing_at,
+  s.schedule_status,
+  s.max_slots
+having count(a.id) filter (
+  where coalesce(a.appointment_status, '') not in ('cancelled', 'canceled')
+) < coalesce(s.max_slots, 100)
+order by s.showing_at asc
+limit 1;
+```
+
+---
+
+## 22. Open Questions for Tomorrow
+
+Need to confirm before coding final version:
+
+1. Exact local auto-click sender endpoint URL and method.
+2. Exact current worker behavior: does it poll `message_send_jobs`, or does Mission Control call the local sender after creating a job?
+3. Exact file/function where intro reply → requirements SMS is currently handled.
+4. Exact current positive/negative classifier for requirements reply, or whether a simple rule-based classifier is currently used.
+5. Whether pipeline state should update to `schedule_sent` immediately when job is queued or only after job is marked `sent`.
+   - Safer: create queue row first, then set `pipeline_status = schedule_sent_pending` would be ideal, but allowed statuses do not include that.
+   - Practical: set `schedule_sent` once queued, and rely on job status for send result.
+6. Whether appointment should be created only after the lead replies yes to the schedule invitation.
+   - Current assumption: yes, appointment is created later after schedule acceptance.
+
+---
+
+## 23. One-Sentence Resume Point
+
+Tomorrow continue from here:
+
+> Add a booking-aware automation branch after the requirements SMS: when an inbound requirements reply is clearly positive, safely match the exact lead/property, read the next future available schedule from `dashboard_showing_schedules`, queue a `03_showing_invitation_v1` message in `message_send_jobs` for the local auto-click sender, update the lead pipeline to `schedule_sent`, and send all non-positive/ambiguous/no-schedule cases to Human Review.

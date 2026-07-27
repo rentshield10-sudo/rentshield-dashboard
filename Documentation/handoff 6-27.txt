@@ -1,0 +1,1049 @@
+# Mission Control Messages Automation — Handoff
+
+**Date:** 2026-06-26  
+**Scope:** Mission Control Messages tab + Quo/OpenPhone webhook automation + AnyClick autosend wiring  
+**Current mode:** Webhook-driven automation. Eligible replies auto-send the requirements template through AnyClick. Non-eligible replies go to Human Review.
+
+---
+
+## 1. Current Goal
+
+The Messages automation is being built to handle inbound Quo/OpenPhone replies.
+
+The current rule is:
+
+```text
+Inbound webhook reply
+→ If it qualifies under the strict one-reply rule, auto-send the requirements template
+→ Otherwise send it to Human Review
+```
+
+The system is no longer meant to show an “Add Template Reply to Queue” button for this first automation path. The Messages tab should display what happened, including the visible job queue window, but the actual decision happens in the webhook route.
+
+---
+
+## 2. Strict Current Automation Rule
+
+For now, the automation should only send the requirements template when all of these are true:
+
+```text
+1. The webhook event is inbound / message.received.
+2. The event came from the Primary Quo/OpenPhone inbox.
+3. The message is not a duplicate webhook message.
+4. The inbound reply is positive or engaged.
+5. Exactly one eligible dashboard lead is matched.
+6. The matched lead has an apartment address.
+7. The requirements template renders successfully.
+8. AnyClick send succeeds.
+9. The lead pipeline update succeeds.
+```
+
+Anything else goes to Human Review.
+
+The practical meaning of the “1 reply rule” right now is:
+
+```text
+Only leads currently eligible for auto-reply are allowed to send:
+current_status = contacted
+conversation_stage = intro_sent
+```
+
+This is enforced through the Supabase RPC:
+
+```sql
+find_single_contacted_lead_for_auto_reply(p_phone text)
+```
+
+The current code does not use `pipeline_status = contacted` for eligibility, because real rows often still have:
+
+```text
+pipeline_status = new_lead
+```
+
+while the actual useful eligibility fields are:
+
+```text
+current_status = contacted
+conversation_stage = intro_sent
+```
+
+---
+
+## 3. Important Environment Variables
+
+Mission Control `.env.local` should include:
+
+```env
+QUO_PRIMARY_INBOX_ID=PNAO2aXSml
+QUO_CONFIRMATION_INBOX_ID=PNosRkPayL
+
+ANYCLICK_BASE_URL=http://127.0.0.1:3001
+ANYCLICK_TEMPLATE_SEND_FLOW_ID=flow_1776996361867_nxr811
+
+QUOSENDER_BASE_URL=http://127.0.0.1:3000
+```
+
+Known inbox IDs:
+
+```text
+Primary leasing number:        PNAO2aXSml
+Confirmation number/inbox:     PNosRkPayL
+```
+
+Only the Primary inbox should trigger the requirements automation. The Confirmation inbox should be ignored by this flow for now. It will later become part of a separate booking confirmation workflow.
+
+---
+
+## 4. Current Webhook URL / Tunnel
+
+During local testing, the webhook was routed through Cloudflare Tunnel.
+
+Current tunnel used during testing:
+
+```text
+https://nickname-shannon-legs-spots.trycloudflare.com
+```
+
+Full Quo/OpenPhone webhook URL:
+
+```text
+https://nickname-shannon-legs-spots.trycloudflare.com/api/messages-automation/webhook
+```
+
+In Quo/OpenPhone webhook settings, only this event should be selected for this automation:
+
+```text
+message.received
+```
+
+Earlier, outgoing/delivered events appeared in the monitor as `Webhook Ignored`. That is not a failure. It means Quo/OpenPhone sent non-inbound webhook events.
+
+---
+
+## 5. Main Files Updated / Touched
+
+### Mission Control
+
+```text
+mission-control-dashboard/app/api/messages-automation/webhook/route.ts
+```
+
+Current purpose:
+
+```text
+Receives Quo/OpenPhone webhook
+Extracts inbound message data
+Filters to Primary inbox
+Dedupes external_message_id
+Saves inbound message to public.messages
+Classifies reply
+Matches eligible lead via RPC
+Renders QuoSender template by apartment address
+Calls AnyClick directly
+Updates dashboard lead pipeline
+Logs ai_decisions
+Creates human_escalations when needed
+```
+
+This file is now the main autosend decision point.
+
+---
+
+```text
+mission-control-dashboard/components/messages/MessagesTab.tsx
+```
+
+Current purpose:
+
+```text
+Displays automation state
+Displays polling status
+Displays queue summary
+Displays Template Send Queue window
+Displays processing timeline
+Displays human review items
+Shows AnyClick payload/result and pipeline update details when present
+```
+
+Important UI change:
+
+```text
+The “Add Template Reply to Queue” button should be removed/hidden.
+The webhook handles autosend now.
+The UI is monitor-only for this first automation path.
+```
+
+---
+
+```text
+mission-control-dashboard/components/messages/MessagesTab.module.css
+```
+
+Current purpose:
+
+```text
+Styles Messages tab
+Styles monitor cards
+Styles timeline
+Styles human review cards
+Styles visible Template Send Queue window
+```
+
+New queue CSS classes added:
+
+```css
+.jobQueue
+.jobItem
+.jobItem.pending
+.jobItem.running
+.jobItem.completed
+.jobItem.failed
+.jobTop
+.jobStatus
+.jobMeta
+.jobPreview
+.jobActions
+```
+
+---
+
+```text
+mission-control-dashboard/lib/quosender.ts
+```
+
+Current purpose:
+
+```text
+Server-side helper to render QuoSender templates by apartment address.
+```
+
+Important function:
+
+```ts
+renderQuoSenderTemplateByAddress({
+  aptAddress,
+  templateKey,
+})
+```
+
+It calls QuoSender:
+
+```text
+/api/templates/render-by-address
+```
+
+and extracts the rendered SMS through:
+
+```ts
+getRenderedTemplateText(...)
+```
+
+---
+
+```text
+mission-control-dashboard/lib/supabase-server.ts
+```
+
+Current purpose:
+
+```text
+Creates Supabase service role client for server routes.
+```
+
+Expected shape:
+
+```ts
+import { createClient } from "@supabase/supabase-js";
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+if (!supabaseUrl) throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL");
+if (!supabaseServiceRoleKey) throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY");
+
+export const supabaseServer = createClient(supabaseUrl, supabaseServiceRoleKey, {
+  auth: { persistSession: false, autoRefreshToken: false },
+});
+```
+
+---
+
+## 6. AnyClick / Autoclicker Wiring
+
+QuoSender’s Schedule Booking flow revealed the real AnyClick endpoint.
+
+The working AnyClick endpoint is:
+
+```text
+http://127.0.0.1:3001/flows/flow_1776996361867_nxr811/run
+```
+
+Mission Control should call it from the server, not directly from the browser.
+
+The payload copied from QuoSender behavior is:
+
+```json
+{
+  "inputs": {
+    "parameters": "+12015551234",
+    "message": "Rendered SMS body here",
+    "phone": "+12015551234"
+  }
+}
+```
+
+In code:
+
+```ts
+const anyClickPayload = {
+  inputs: {
+    parameters: phone,
+    message,
+    phone,
+  },
+};
+```
+
+The webhook route calls:
+
+```ts
+fetch(`${ANYCLICK_BASE_URL}/flows/${ANYCLICK_TEMPLATE_SEND_FLOW_ID}/run`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  cache: "no-store",
+  body: JSON.stringify(anyClickPayload),
+});
+```
+
+---
+
+## 7. Supabase Tables Used
+
+### `public.message_automation_state`
+
+Used by:
+
+```text
+/api/messages-automation/monitor
+/api/messages-automation/webhook
+/api/messages-automation/run-now
+```
+
+Purpose:
+
+```text
+Stores current automation status and polling settings.
+```
+
+Fields used:
+
+```text
+id
+polling_enabled
+interval_minutes
+status
+last_checked_at
+updated_at
+```
+
+Main row:
+
+```text
+id = main
+```
+
+Statuses currently used include:
+
+```text
+idle
+fetching
+new_message_received
+matching_lead
+choosing_template
+template_selected
+sending
+updating_pipeline
+pipeline_updated
+human_review
+webhook_ignored
+webhook_duplicate
+error
+```
+
+---
+
+### `public.ai_decisions`
+
+Used for the processing timeline and queue display.
+
+Fields used:
+
+```text
+id
+created_at
+intent
+decision
+reply_text
+needs_human
+human_reason
+should_send
+sent
+error
+model_used
+prompt_version
+```
+
+Prompt version used:
+
+```text
+message_automation_v1
+```
+
+Important decisions:
+
+```text
+template_selected
+template_sent
+template_send_failed
+template_sent_but_pipeline_update_failed
+human_review
+webhook_ignored
+webhook_duplicate_message
+webhook_error
+```
+
+For autosend success, expected row:
+
+```text
+decision = template_sent
+should_send = true
+sent = true
+needs_human = false
+```
+
+For human review:
+
+```text
+decision = human_review
+needs_human = true
+sent = false
+```
+
+For send failure:
+
+```text
+decision = template_send_failed
+needs_human = true
+should_send = true
+sent = false
+error = <AnyClick or render error>
+```
+
+The `reply_text` JSON contains:
+
+```json
+{
+  "phone": "+12015551234",
+  "inboundText": "Lead reply",
+  "templateKey": "02_requirements_request_v1",
+  "messagePreview": "Rendered SMS",
+  "lead": {
+    "lead_id": "552",
+    "lead_name": "Name",
+    "phone": "+12015551234",
+    "apt_address": "48 Monroe St #1",
+    "current_status": "contacted",
+    "conversation_stage": "intro_sent",
+    "pipeline_status": "new_lead"
+  },
+  "reason": "webhook_positive_reply_template_sent",
+  "nextStep": "Template sent through AnyClick and pipeline updated.",
+  "webhook": {
+    "eventType": "message.received",
+    "externalMessageId": "...",
+    "externalConversationId": "...",
+    "phoneNumberId": "PNAO2aXSml",
+    "createdAt": "..."
+  },
+  "quoSenderTemplateResponse": {},
+  "anyClickPayload": {},
+  "anyClickResult": {},
+  "pipelineUpdate": {}
+}
+```
+
+---
+
+### `public.messages`
+
+Used to save inbound webhook messages and dedupe.
+
+Fields used:
+
+```text
+id
+phone
+channel
+direction
+message_text
+external_message_id
+external_conversation_id
+processed
+intent
+```
+
+Webhook save values:
+
+```text
+channel = quo
+direction = inbound
+processed = false initially
+intent = webhook_received
+```
+
+After success:
+
+```text
+processed = true
+intent = requirements_sent
+```
+
+After human review:
+
+```text
+processed = true
+intent = human_review
+```
+
+After send failure:
+
+```text
+processed = true
+intent = send_failed_human_review
+```
+
+After pipeline update failure:
+
+```text
+processed = true
+intent = requirements_sent_pipeline_update_failed
+```
+
+Deduping is by:
+
+```text
+external_message_id
+```
+
+If the same webhook message arrives twice, it logs:
+
+```text
+webhook_duplicate_message
+```
+
+and does not send again.
+
+---
+
+### `public.human_escalations`
+
+Used when automation should not send or when an error occurs.
+
+Fields used:
+
+```text
+id
+created_at
+updated_at
+phone
+reason
+priority
+status
+human_notes
+resolved_at
+```
+
+Reasons are stored with prefix:
+
+```text
+automation:<reason>
+```
+
+Examples:
+
+```text
+automation:lead_reply_not_clearly_positive
+automation:no_matching_eligible_lead
+automation:multiple_matching_eligible_leads
+automation:matched_lead_missing_apt_address
+automation:template_render_empty
+automation:template_render_or_anyclick_send_failed
+automation:pipeline_update_failed_after_template_sent
+```
+
+The helper updates an existing open escalation for the same phone/reason instead of always inserting duplicates.
+
+---
+
+### `public.dashboard_leads`
+
+Used as the main lead table.
+
+Important fields:
+
+```text
+lead_id
+lead_name
+phone
+apt_address
+current_status
+conversation_stage
+pipeline_status
+last_outbound_sms
+last_outbound_at
+stop_automation
+needs_human_review
+```
+
+Autosend eligibility expects:
+
+```text
+current_status = contacted
+conversation_stage = intro_sent
+```
+
+After successful requirements send, the pipeline update RPC should set something equivalent to:
+
+```text
+pipeline_status = requirements_sent
+conversation_stage = requirements_sent
+last_outbound_sms = rendered requirements SMS
+last_outbound_at = now()
+```
+
+The exact update logic lives in the RPC.
+
+---
+
+### `public.dashboard_leads_clean`
+
+Used during lookup/debugging. Some lead data may exist here depending on sync state.
+
+Useful debug query:
+
+```sql
+select
+  lead_id,
+  lead_name,
+  phone,
+  apt_address,
+  current_status,
+  conversation_stage,
+  pipeline_status
+from dashboard_leads_clean
+where regexp_replace(phone, '\\D', '', 'g') like '%9084680807%';
+```
+
+---
+
+### `public.templates`
+
+Used by QuoSender/template rendering. Mission Control currently calls QuoSender instead of querying this table directly.
+
+Current test template:
+
+```text
+02_requirements_request_v1
+```
+
+---
+
+### `public.conversations`
+
+Referenced as part of overall messages automation context, but not the main table for this current webhook autosend path.
+
+---
+
+## 8. RPCs Used
+
+### `find_single_contacted_lead_for_auto_reply(p_phone text)`
+
+Purpose:
+
+```text
+Find exactly one eligible contacted lead for the inbound phone number.
+```
+
+The webhook expects it to return a row with:
+
+```text
+matched_count
+lead_id
+lead_name
+phone
+apt_address
+pipeline_status
+current_status
+conversation_stage
+last_outbound_sms
+last_outbound_at
+stop_automation
+needs_human_review
+```
+
+The webhook sends only when:
+
+```text
+matched_count = 1
+lead exists
+lead.apt_address exists
+```
+
+Otherwise Human Review.
+
+---
+
+### `mark_lead_requirements_sent(p_lead_id text, p_inbound_sms text, p_outbound_sms text)`
+
+Purpose:
+
+```text
+Update dashboard lead after AnyClick successfully sends the requirements SMS.
+```
+
+Called only after AnyClick returns success.
+
+Expected behavior:
+
+```text
+Set lead pipeline/conversation stage to requirements_sent.
+Store inbound and outbound SMS details.
+```
+
+If this RPC fails after AnyClick succeeds, the system logs:
+
+```text
+template_sent_but_pipeline_update_failed
+```
+
+and creates a Human Review item.
+
+---
+
+## 9. Positive Reply Logic
+
+Current positive/engaged reply detection includes:
+
+```text
+yes
+yeah
+yep
+ok
+okay
+sure
+interested
+available
+schedule
+showing
+tour
+see
+coming
+there
+today
+tomorrow
+sunday
+monday
+tuesday
+wednesday
+thursday
+friday
+saturday
+what time
+wat time
+time
+appointment
+appoitment
+apoimen
+apointment
+appoint
+appt
+apt time
+tha apoimen
+```
+
+Hard negative signals block autosend:
+
+```text
+stop
+unsubscribe
+wrong number
+not interested
+no longer interested
+already found
+too expensive
+scam
+who is this
+```
+
+Examples that should pass:
+
+```text
+Hi yes we would like to see it
+Hello, yes, I'm interested and I would like to schedule an appointment tomorrow.
+Ok wat time tha apoimen
+```
+
+---
+
+## 10. Current Messages Tab UI
+
+The Messages tab now should include:
+
+```text
+Automation Status
+Queue Summary
+Template Send Queue
+Processing Timeline
+Needs Human Review
+After Successful Send
+Raw Quo Inbox Debug View
+```
+
+The Template Send Queue is a monitor window, not the final persistent backend queue yet.
+
+Queue statuses are derived from `ai_decisions`:
+
+```text
+pending:
+  decision = template_selected OR should_send = true AND sent = false AND no error
+
+completed:
+  sent = true OR decision = template_sent
+
+failed:
+  error exists OR decision = template_send_failed OR template_sent_but_pipeline_update_failed
+```
+
+There is no “Add Template Reply to Queue” button anymore for this first autosend flow.
+
+The timeline can show:
+
+```text
+Inbound Reply
+Webhook
+Matched Lead
+Template
+Message Preview
+QuoSender Render Response
+AnyClick Payload
+AnyClick Result
+Pipeline Update
+Next Step
+```
+
+---
+
+## 11. Important Testing Notes
+
+### Polling should stay paused during webhook autosend testing
+
+If polling is running while webhooks are also active, the same lead/message can appear twice:
+
+```text
+1. Webhook processes the inbound message.
+2. Polling later scans the conversation and processes the same conversation/message.
+```
+
+For now:
+
+```text
+Use webhook for real automation.
+Keep polling paused.
+Use Run Now only for manual testing.
+```
+
+### Duplicate webhook protection
+
+Webhook duplicate protection is based on:
+
+```text
+public.messages.external_message_id
+```
+
+If Quo/OpenPhone sends the exact same webhook message twice, the second one should log duplicate and not send.
+
+### Cross-conversation duplicate risk
+
+If Quo/OpenPhone creates a new `messageId` for the same human text, the current dedupe may not catch it. Later, the backend queue should add stronger dedupe such as:
+
+```text
+phone + inboundText + templateKey + time window
+```
+
+or a dedicated queue table with unique constraints.
+
+---
+
+## 12. Known Current State
+
+### Working
+
+```text
+Webhook receives inbound replies.
+Webhook filters Primary inbox.
+Webhook ignores Confirmation inbox.
+Webhook saves inbound message.
+Webhook dedupes by external message id.
+Webhook matches eligible lead.
+Webhook renders requirements template through QuoSender.
+Webhook calls AnyClick directly.
+Webhook updates pipeline through RPC.
+Messages tab shows timeline and queue-style job window.
+Human Review rows are created for non-send cases.
+```
+
+### Still basic / not final
+
+```text
+The Template Send Queue is currently UI-derived from ai_decisions.
+There is not yet a dedicated persistent send_queue table.
+There is not yet a backend worker that processes one job at a time.
+Autosend currently calls AnyClick directly inside the webhook route.
+```
+
+This is acceptable for current testing but should be improved before scaling.
+
+---
+
+## 13. Tomorrow’s Next Step
+
+The next planned feature is the Human Review workstation.
+
+Goal:
+
+```text
+Make the Human Review window behave like QuoSender Schedule Booking.
+```
+
+Needed UI behavior:
+
+```text
+1. Left side: list of Human Review items / contacts.
+2. Middle: selected conversation or selected review details.
+3. Right/composer area: message input box.
+4. Template buttons loaded for the matched property/address.
+5. Clicking a template button instantly pastes/renders the template into the input box.
+6. User reviews/edits the SMS.
+7. User presses Send.
+8. Send uses the same AnyClick payload shape.
+```
+
+This should match the QuoSender UX:
+
+```text
+Click template button
+→ template text autopastes into input box
+→ press send button
+→ sends through AnyClick/autoclicker
+```
+
+Important QuoSender files/behavior to copy conceptually:
+
+```text
+ScheduleBooking.tsx
+JobQueue component
+Template button behavior
+Composer input behavior
+Send button payload
+```
+
+Frontend send payload shape remains:
+
+```json
+{
+  "inputs": {
+    "parameters": "+12015551234",
+    "message": "SMS body",
+    "phone": "+12015551234"
+  }
+}
+```
+
+For Human Review, do not autosend. Human Review must be manual:
+
+```text
+template button paste
+→ user presses send
+```
+
+---
+
+## 14. Suggested Future Improvement
+
+After tomorrow’s Human Review UI, add a true backend queue table.
+
+Suggested table:
+
+```sql
+create table if not exists public.message_send_jobs (
+  id bigserial primary key,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  status text not null default 'pending',
+  phone text not null,
+  lead_id text,
+  template_key text,
+  inbound_text text,
+  outbound_text text not null,
+  external_message_id text,
+  external_conversation_id text,
+  source text default 'messages_automation',
+  attempts int default 0,
+  last_error text,
+  anyclick_payload jsonb,
+  anyclick_result jsonb,
+  ai_decision_id bigint
+);
+```
+
+Add uniqueness/dedupe later:
+
+```sql
+unique(phone, template_key, external_message_id)
+```
+
+Then webhook should enqueue jobs instead of directly calling AnyClick. A worker route should process one job at a time:
+
+```text
+/api/messages-automation/process-next-job
+```
+
+That will prevent multiple simultaneous AnyClick jobs.
+
+---
+
+## 15. End-of-Day Summary
+
+Today we moved the system from “template preview only” toward “auto-send or human review.”
+
+Main changes:
+
+```text
+1. Confirmed QuoSender/AnyClick payload.
+2. Confirmed AnyClick endpoint:
+   http://127.0.0.1:3001/flows/flow_1776996361867_nxr811/run
+
+3. Wired webhook autosend path:
+   webhook → lead match → render template → AnyClick → pipeline update.
+
+4. Kept strict eligibility:
+   one eligible lead only, current_status/contacted and conversation_stage/intro_sent.
+
+5. Added/updated Messages tab job queue window:
+   queue is visible as a monitor from ai_decisions.
+
+6. Removed need for manual “Add Template Reply to Queue” button for the first automation path.
+
+7. Identified tomorrow’s work:
+   Human Review workstation with QuoSender-style template buttons and manual send composer.
+```

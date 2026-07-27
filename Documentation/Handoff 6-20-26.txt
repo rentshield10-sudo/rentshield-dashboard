@@ -1,0 +1,911 @@
+Mission Control Messages / Auto-Reply Continuation Handoff
+1. Main Goal
+
+We are moving the useful QuoSender features into the Mission Control dashboard.
+
+The long-term goal is:
+
+Mission Control Dashboard
+→ Messages tab
+→ templates with variables
+→ auto-reply rules
+→ QuoSender queue controls
+→ send through existing QuoSender / web auto-clicker server
+→ update Supabase lead pipeline
+
+The dashboard becomes the control center. The existing QuoSender server remains the backend sender/listener for now.
+
+Current high-level flow:
+
+Zillow lead
+→ n8n sends intro message
+→ Supabase stores lead/message state
+→ lead replies in Quo
+→ QuoSender server detects inbound reply
+→ Mission Control / Supabase decides what to do
+→ if eligible, send requirements template
+→ update lead to requirements_sent
+→ otherwise send to Human Review
+2. Where We Left Off
+
+We successfully added the new Messages nav tab to the Mission Control dashboard.
+
+Current sidebar now shows:
+
+Home
+Leads
+Human Review
+Booking
+Messages
+
+The Messages page currently renders placeholder cards:
+
+Auto Reply
+Message Templates
+QuoSender Queue
+
+This is working in the browser at localhost:3002.
+
+The dashboard file we updated is app/page.tsx. Its current app state uses:
+
+type ActiveView = "home" | "leads" | "human" | "booking" | "messages";
+
+and the new component is:
+
+components/messages/MessagesTab.tsx
+components/messages/MessagesTab.module.css
+
+The existing app/page.tsx already loads leads from dashboard_leads_clean and includes pipeline_status in the select.
+
+3. Important Supabase Tables Already Present
+
+The database already has the right foundation. Do not create duplicate tables yet unless needed.
+
+Known public tables/views:
+
+public.ai_decisions
+public.conversations
+public.dashboard_leads
+public.dashboard_leads_clean
+public.dashboard_rows
+public.dashboard_schedule_template_items
+public.dashboard_schedule_templates
+public.dashboard_showing_appointments
+public.dashboard_showing_schedules
+public.human_escalations
+public.leads
+public.messages
+public.properties
+public.showing_appointments
+public.showing_schedules
+public.templates
+public.dashboard_apartments
+
+Important older/backup tables exist too, but they should not be used for the current dashboard flow.
+
+The key live tables for this first auto-reply are:
+
+public.dashboard_leads
+public.dashboard_leads_clean
+public.messages
+public.conversations
+public.templates
+public.human_escalations
+public.ai_decisions
+
+The existing database also already has functions/RPCs related to intro, AI reply context, human escalation, and booking updates, including mark_intro_sent, prepare_catchall_ai_context, finalize_catchall_ai_reply, create_ai_human_escalation, and update_dashboard_lead_booked.
+
+4. Current Important Schema Details
+public.dashboard_leads
+
+This is the dashboard pipeline source table.
+
+Important columns:
+
+lead_id text
+created_at text
+lead_name text
+phone text
+apt_address text
+source text
+current_status text
+conversation_stage text
+last_inbound_sms text
+last_inbound_at text
+last_outbound_sms text
+last_outbound_at text
+selected_slot text
+needs_human_review text
+stop_automation text
+notes text
+imported_at timestamptz
+pipeline_stage text default 'new_lead'
+appointment_status text
+confirmation_status text
+attendance_status text
+showing_at text
+last_pipeline_update_at text
+updated_at timestamptz
+pipeline_status text default 'new_lead'
+
+Important note: many fields in dashboard_leads are text, including last_inbound_at, last_outbound_at, and last_pipeline_update_at, so SQL functions should use now()::text for those fields.
+
+public.dashboard_leads_clean
+
+This is the view the dashboard reads from.
+
+Important columns:
+
+lead_id
+created_at
+lead_name
+phone
+apt_address
+source
+current_status
+conversation_stage
+last_inbound_sms
+last_inbound_at
+last_outbound_sms
+last_outbound_at
+selected_slot
+needs_human_review
+stop_automation
+notes
+created_at_ts
+last_inbound_at_ts
+last_outbound_at_ts
+needs_human_review_bool
+stop_automation_bool
+pipeline_status
+
+The Leads tab should continue reading from this view.
+
+public.messages
+
+This table already stores message logs.
+
+Important columns seen from recent records:
+
+id
+created_at
+conversation_id
+lead_id
+property_id
+phone
+channel
+direction
+message_text
+external_message_id
+external_conversation_id
+processed
+intent
+template_key
+
+Recent messages are outbound intro messages with:
+
+direction = outbound
+intent = initial_outreach
+template_key = initial_outreach
+processed = true
+
+So the message log table is already being used by the intro/n8n process.
+
+public.conversations
+
+Important columns:
+
+id bigint
+created_at timestamptz
+updated_at timestamptz
+lead_id bigint
+property_id bigint
+phone text
+channel text default 'sms'
+status text default 'active'
+last_message_at timestamptz
+last_message_text text
+needs_human boolean default false
+stop_automation boolean default false
+summary text
+public.human_escalations
+
+Important columns:
+
+id bigint
+created_at timestamptz
+updated_at timestamptz
+lead_id bigint
+property_id bigint
+conversation_id bigint
+message_id bigint
+phone text
+reason text
+priority text default 'normal'
+status text default 'open'
+assigned_to text
+human_notes text
+resolved_at timestamptz
+public.ai_decisions
+
+Important columns:
+
+id bigint
+created_at timestamptz
+message_id bigint
+conversation_id bigint
+lead_id bigint
+property_id bigint
+intent text
+confidence numeric
+matched_template_id bigint
+decision text
+reply_text text
+needs_human boolean default false
+human_reason text
+should_send boolean default false
+sent boolean default false
+error text
+model_used text
+prompt_version text
+public.templates
+
+The templates table exists but was empty when checked.
+
+Columns:
+
+id bigint
+created_at timestamptz default now()
+updated_at timestamptz default now()
+template_name text not null
+template_type text
+channel text default 'sms'
+stage text
+intent text
+content text not null
+requires_human_approval boolean default false
+is_active boolean default true
+priority integer default 0
+
+This is where the QuoSender templates should be stored in Supabase.
+
+5. Current Status Problem
+
+The intro message is already being sent, but the new pipeline_status is not being updated correctly yet.
+
+Current status summary showed many rows like:
+
+current_status = contacted
+conversation_stage = intro_sent
+pipeline_status = new_lead
+
+Specifically, there were 460 rows with that combination.
+
+So for the first auto-reply, we decided not to rely on:
+
+pipeline_status = contacted
+
+because it is not populated yet.
+
+Instead, the first rule should use the existing real state:
+
+current_status = contacted
+conversation_stage = intro_sent
+
+Later, n8n or mark_intro_sent should also set:
+
+pipeline_status = contacted
+6. First Auto-Reply Rule
+
+The first auto-reply rule is:
+
+If any inbound reply comes from a phone number
+AND exactly one matching dashboard lead exists for that phone
+AND that lead has current_status = contacted
+AND that lead has conversation_stage = intro_sent
+AND automation is not stopped
+AND human review is not already required
+AND lead has not already moved to requirements_sent/booked/etc
+
+THEN:
+send 02_requirements_request_v1 template
+
+ELSE:
+send nothing
+mark/send to Human Review
+
+This handles the issue where the same phone number may inquire again weeks later for a different apartment.
+
+Safe rule:
+
+0 matching intro_sent/contacted leads
+→ Human Review / no auto-send
+
+1 matching intro_sent/contacted lead
+→ Send requirements template
+
+2+ matching intro_sent/contacted leads
+→ Human Review / no auto-send
+
+This avoids guessing which apartment the person means.
+
+7. QuoSender Templates to Move
+
+The QuoSender server UI already has templates like:
+
+01_initial_outreach_intro_v1
+02_requirements_request_v1
+03_showing_invitation_v1
+04_appointment_confirmed_v1
+05_same_day_confirmation_v1
+06_still_interested_followup_v1
+07_keep_posted_schedule_v1
+08_missed_call_reply_v1
+09_only_time_available_v1
+
+For the first auto-reply, use:
+
+02_requirements_request_v1
+
+Still missing: the exact full text of 02_requirements_request_v1.
+
+Need to copy it from QuoSender and insert it into public.templates.
+
+8. SQL Already Created / Attempted
+Existing helper function
+
+This was created:
+
+create or replace function public.normalize_phone_text(p_phone text)
+returns text
+language sql
+immutable
+as $$
+  select nullif(regexp_replace(coalesce(p_phone, ''), '\D', '', 'g'), '');
+$$;
+Existing lookup function issue
+
+There was already a function:
+
+public.find_single_contacted_lead_for_auto_reply(text)
+
+The first version checked pipeline_status = contacted, which returned no rows because real data still has pipeline_status = new_lead.
+
+We tried to replace the function with a new return shape, but Supabase/Postgres gave this error:
+
+ERROR: 42P13: cannot change return type of existing function
+HINT: use DROP FUNCTION find_single_contacted_lead_for_auto_reply(text) first.
+
+So next time, run:
+
+drop function if exists public.find_single_contacted_lead_for_auto_reply(text);
+
+Then create the corrected version.
+
+9. Corrected Lookup Function To Run Next
+
+Run this next in Supabase SQL Editor:
+
+drop function if exists public.find_single_contacted_lead_for_auto_reply(text);
+
+create or replace function public.find_single_contacted_lead_for_auto_reply(
+  p_phone text
+)
+returns table (
+  matched_count bigint,
+  lead_id text,
+  lead_name text,
+  phone text,
+  apt_address text,
+  pipeline_status text,
+  current_status text,
+  conversation_stage text,
+  last_outbound_sms text,
+  last_outbound_at text,
+  stop_automation text,
+  needs_human_review text
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_normalized_phone text;
+begin
+  v_normalized_phone := public.normalize_phone_text(p_phone);
+
+  return query
+  with matches as (
+    select
+      dl.lead_id::text as lead_id,
+      dl.lead_name::text as lead_name,
+      dl.phone::text as phone,
+      dl.apt_address::text as apt_address,
+      dl.pipeline_status::text as pipeline_status,
+      dl.current_status::text as current_status,
+      dl.conversation_stage::text as conversation_stage,
+      dl.last_outbound_sms::text as last_outbound_sms,
+      dl.last_outbound_at::text as last_outbound_at,
+      dl.stop_automation::text as stop_automation,
+      dl.needs_human_review::text as needs_human_review
+    from public.dashboard_leads dl
+    where public.normalize_phone_text(dl.phone) = v_normalized_phone
+      and lower(coalesce(dl.current_status, '')) = 'contacted'
+      and lower(coalesce(dl.conversation_stage, '')) = 'intro_sent'
+      and lower(coalesce(dl.pipeline_status, 'new_lead')) not in (
+        'requirements_sent',
+        'schedule_sent',
+        'booked',
+        'confirmed',
+        'showed',
+        'no_show',
+        'cancelled',
+        'reschedule_needed',
+        'lost',
+        'nurture'
+      )
+      and lower(coalesce(dl.stop_automation::text, 'false')) not in ('true', 'yes', '1')
+      and lower(coalesce(dl.needs_human_review::text, 'false')) not in ('true', 'yes', '1')
+  ),
+  counted as (
+    select count(*) as matched_count from matches
+  )
+  select
+    counted.matched_count,
+    matches.lead_id,
+    matches.lead_name,
+    matches.phone,
+    matches.apt_address,
+    matches.pipeline_status,
+    matches.current_status,
+    matches.conversation_stage,
+    matches.last_outbound_sms,
+    matches.last_outbound_at,
+    matches.stop_automation,
+    matches.needs_human_review
+  from counted
+  left join matches on counted.matched_count = 1;
+end;
+$$;
+
+grant execute on function public.find_single_contacted_lead_for_auto_reply(text) to anon;
+grant execute on function public.find_single_contacted_lead_for_auto_reply(text) to authenticated;
+
+Test with a real phone from public.messages:
+
+select *
+from public.find_single_contacted_lead_for_auto_reply('+17189542664');
+
+Expected result:
+
+matched_count = 1
+→ safe to send requirements template
+
+matched_count = 0
+→ no eligible lead / Human Review
+
+matched_count > 1
+→ multiple active intro_sent leads / Human Review
+10. Insert Requirements Template Next
+
+First copy the full 02_requirements_request_v1 content from QuoSender.
+
+Then insert it into Supabase:
+
+insert into public.templates (
+  template_name,
+  template_type,
+  channel,
+  stage,
+  intent,
+  content,
+  requires_human_approval,
+  is_active,
+  priority
+)
+values (
+  '02_requirements_request_v1',
+  'auto_reply',
+  'sms',
+  'requirements_sent',
+  'requirements_request',
+  'PASTE FULL REQUIREMENTS TEMPLATE HERE',
+  false,
+  true,
+  10
+);
+
+Check it:
+
+select *
+from public.templates
+where template_name = '02_requirements_request_v1';
+11. Update / Recreate mark_lead_requirements_sent
+
+There is already a function:
+
+public.mark_lead_requirements_sent(p_lead_id text, p_inbound_sms text, p_outbound_sms text)
+
+But it should clearly update both the old fields and the new pipeline_status.
+
+Run this:
+
+create or replace function public.mark_lead_requirements_sent(
+  p_lead_id text,
+  p_inbound_sms text,
+  p_outbound_sms text
+)
+returns table (
+  updated_lead_id text,
+  updated_pipeline_status text
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  return query
+  update public.dashboard_leads dl
+  set
+    last_inbound_sms = p_inbound_sms,
+    last_inbound_at = now()::text,
+    last_outbound_sms = p_outbound_sms,
+    last_outbound_at = now()::text,
+    current_status = 'contacted',
+    conversation_stage = 'requirements_sent',
+    pipeline_status = 'requirements_sent',
+    needs_human_review = 'false',
+    last_pipeline_update_at = now()::text,
+    updated_at = now()
+  where dl.lead_id::text = p_lead_id
+  returning
+    dl.lead_id::text,
+    dl.pipeline_status::text;
+end;
+$$;
+
+grant execute on function public.mark_lead_requirements_sent(text, text, text) to anon;
+grant execute on function public.mark_lead_requirements_sent(text, text, text) to authenticated;
+12. Human Review Function
+
+There is already:
+
+public.mark_lead_human_review(p_lead_id text, p_inbound_sms text, p_reason text)
+
+It updates dashboard_leads.needs_human_review.
+
+But there is a limitation:
+
+If no matching lead exists, we cannot call this because there is no p_lead_id.
+
+For zero-match cases, we should later insert into:
+
+public.human_escalations
+
+using phone-only context.
+
+Eventually create a new function like:
+
+public.create_message_human_escalation_from_phone(
+  p_phone text,
+  p_inbound_sms text,
+  p_reason text,
+  p_raw_payload jsonb
+)
+
+But for the first version, the QuoSender server can log zero-match cases or create an escalation through the existing create_ai_human_escalation if suitable.
+
+13. Dashboard Files
+Already updated / touched
+app/page.tsx
+components/messages/MessagesTab.tsx
+components/messages/MessagesTab.module.css
+Existing important files
+app/page.tsx
+app/page.module.css
+components/leads/LeadsTab.tsx
+components/leads/LeadsTab.module.css
+components/booking/BookingTab.tsx
+components/booking/BookingTab.module.css
+components/messages/MessagesTab.tsx
+components/messages/MessagesTab.module.css
+lib/supabase.ts
+What app/page.tsx currently does
+
+It imports:
+
+import BookingTab from "../components/booking/BookingTab";
+import MessagesTab from "../components/messages/MessagesTab";
+import { supabase } from "../lib/supabase";
+import styles from "./page.module.css";
+import LeadsTab from "../components/leads/LeadsTab";
+
+It uses:
+
+type ActiveView = "home" | "leads" | "human" | "booking" | "messages";
+
+It includes Messages in navItems.
+
+It renders:
+
+{activeView === "messages" && <MessagesTab />}
+
+The dashboard reads leads from:
+
+.from("dashboard_leads_clean")
+.select(
+  "lead_id, created_at, created_at_ts, lead_name, phone, apt_address, current_status, conversation_stage, needs_human_review_bool, notes, last_outbound_sms, last_outbound_at, pipeline_status"
+)
+
+This is correct for now.
+
+14. Next Dashboard UI Step
+
+The current MessagesTab is just placeholder cards.
+
+Next improvement should be to load templates from Supabase and show the requirements template.
+
+Add template type in MessagesTab.tsx
+type MessageTemplate = {
+  id: number;
+  template_name: string;
+  template_type: string | null;
+  channel: string | null;
+  stage: string | null;
+  intent: string | null;
+  content: string;
+  requires_human_approval: boolean | null;
+  is_active: boolean | null;
+  priority: number | null;
+};
+Messages tab should eventually display:
+Auto Reply Rule
+- Name: Intro Reply → Requirements
+- Trigger: inbound reply after intro_sent
+- Template: 02_requirements_request_v1
+- Status after send: requirements_sent
+- Fallback: Human Review
+
+Templates
+- 02_requirements_request_v1
+- preview content
+- active/inactive
+
+Queue
+- later
+
+Do not build the full queue yet.
+
+15. QuoSender Server Files Needed Next
+
+The QuoSender server project shown in VS Code is:
+
+quosenderv2/
+  packages/
+    sender/
+      server/
+        src/
+          db/
+          routes/
+          services/
+          types/
+          config.ts
+          index.ts
+          test2.ts
+
+Next time, inspect/send these files first:
+
+packages/sender/server/src/index.ts
+packages/sender/server/src/config.ts
+packages/sender/server/src/routes/*
+packages/sender/server/src/services/*
+
+Search in VS Code for:
+
+incoming
+sendMessage
+template
+queue
+quo
+poll
+listen
+message
+
+Most important files are:
+
+file that fetches/listens for inbound Quo messages
+file that sends SMS through Quo/web auto-clicker
+file that renders templates
+file that queues sends
+16. QuoSender Server Logic To Add Later
+
+When QuoSender receives an inbound message:
+
+async function handleInboundQuoMessage(inbound) {
+  const phone = inbound.phone;
+  const inboundText = inbound.message;
+
+  // 1. Ask Supabase if this phone has exactly one eligible lead.
+  const lookup = await supabase.rpc(
+    "find_single_contacted_lead_for_auto_reply",
+    { p_phone: phone }
+  );
+
+  const row = lookup.data?.[0];
+
+  if (!row || row.matched_count !== 1) {
+    // no send
+    // human review later
+    return {
+      action: "human_review",
+      reason: `matched_count=${row?.matched_count ?? 0}`,
+    };
+  }
+
+  // 2. Fetch requirements template.
+  const template = await supabase
+    .from("templates")
+    .select("*")
+    .eq("template_name", "02_requirements_request_v1")
+    .eq("is_active", true)
+    .single();
+
+  // 3. Render template variables.
+  const renderedMessage = renderTemplate(template.content, {
+    propertyname: row.apt_address,
+    address: row.apt_address,
+    city: "",
+    state: "",
+    price: "",
+    bedrooms: "",
+    schedule: "",
+    time: "",
+    contactPhone: "",
+    leadName: row.lead_name,
+  });
+
+  // 4. Send through existing Quo send/web auto-clicker logic.
+  const sendResult = await sendViaQuo({
+    phone,
+    message: renderedMessage,
+  });
+
+  if (!sendResult.ok) {
+    // mark human review or log error
+    return {
+      action: "send_failed",
+      error: sendResult.error,
+    };
+  }
+
+  // 5. Mark lead requirements sent.
+  await supabase.rpc("mark_lead_requirements_sent", {
+    p_lead_id: row.lead_id,
+    p_inbound_sms: inboundText,
+    p_outbound_sms: renderedMessage,
+  });
+
+  return {
+    action: "requirements_sent",
+    lead_id: row.lead_id,
+  };
+}
+
+This is pseudo-code. Do not paste directly until we inspect your QuoSender route/service files.
+
+17. What Is Still Missing
+Supabase
+
+Missing:
+
+Full requirements template inserted into public.templates
+Corrected lookup function created after DROP FUNCTION
+Final test of lookup function using real phone
+Human Review function for zero-match phone-only cases
+Optional message insert/logging RPC for inbound messages
+Optional outbound message insert after sending requirements
+Dashboard
+
+Missing:
+
+Messages tab reading templates from Supabase
+Messages tab showing Auto Reply rule details
+Messages tab showing template content preview
+Messages tab active/inactive controls
+Messages tab recent activity
+Messages tab queue UI
+QuoSender Server
+
+Missing:
+
+Supabase connection in QuoSender server, if not already connected
+Inbound listener handler wired to Supabase lookup RPC
+Template fetch from Supabase
+Template render with variables
+Send requirements message through existing Quo sender
+Finalize/update Supabase after send
+Human Review fallback for ambiguous cases
+n8n / Intro Flow
+
+Missing:
+
+n8n or mark_intro_sent should set pipeline_status = contacted
+
+Right now intro sent is stored as:
+
+current_status = contacted
+conversation_stage = intro_sent
+pipeline_status = new_lead
+
+Later, fix this so intro sent also sets:
+
+pipeline_status = contacted
+18. Recommended Next Session Order
+Step 1 — Finish Supabase functions
+
+Run:
+
+drop function if exists public.find_single_contacted_lead_for_auto_reply(text);
+
+Then create the corrected lookup function from section 9.
+
+Step 2 — Insert the requirements template
+
+Copy full 02_requirements_request_v1 text from QuoSender.
+
+Insert into:
+
+public.templates
+Step 3 — Test lookup
+
+Run:
+
+select *
+from public.find_single_contacted_lead_for_auto_reply('+REAL_PHONE_HERE');
+
+Use a phone from public.messages where the last outbound was initial outreach.
+
+Step 4 — Update mark_lead_requirements_sent
+
+Run the updated SQL from section 11.
+
+Step 5 — Connect Messages tab to templates
+
+Update:
+
+components/messages/MessagesTab.tsx
+
+to read from:
+
+public.templates
+
+and display 02_requirements_request_v1.
+
+Step 6 — Inspect QuoSender server files
+
+Open/send:
+
+packages/sender/server/src/index.ts
+packages/sender/server/src/config.ts
+packages/sender/server/src/routes/*
+packages/sender/server/src/services/*
+
+Then add Supabase RPC calls to the inbound-message handler.
+
+Step 7 — First end-to-end test
+
+Expected test:
+
+1. n8n sends intro
+2. dashboard_leads row has current_status = contacted, conversation_stage = intro_sent
+3. lead replies in Quo
+4. QuoSender detects inbound
+5. QuoSender calls Supabase lookup
+6. lookup returns matched_count = 1
+7. QuoSender sends requirements template
+8. QuoSender calls mark_lead_requirements_sent
+9. dashboard_leads shows pipeline_status = requirements_sent
+10. Leads tab shows Requirements Sent after refresh
+19. One-Sentence Summary
+
+We added the new Messages nav tab to Mission Control; next we need to store 02_requirements_request_v1 in Supabase, fix the auto-reply lookup function to use current_status = contacted and conversation_stage = intro_sent, then connect the QuoSender inbound listener so any safe inbound reply after intro automatically sends the requirements template and updates the lead to requirements_sent, while ambiguous cases go to Human Review.

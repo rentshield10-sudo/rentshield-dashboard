@@ -305,6 +305,36 @@ function buildShowingLabel(dateKey: string, timeValue: string) {
     return `${weekday} ${formatTime(iso)}`;
 }
 
+function getPipelineStatusFromBooking({
+    appointmentStatus,
+    confirmationStatus,
+    attendanceStatus,
+}: {
+    appointmentStatus?: string | null;
+    confirmationStatus?: string | null;
+    attendanceStatus?: string | null;
+}) {
+    const appointment = String(appointmentStatus || "").toLowerCase();
+    const confirmation = String(confirmationStatus || "").toLowerCase();
+    const attendance = String(attendanceStatus || "").toLowerCase();
+
+    if (attendance === "attended") return "showed";
+    if (attendance === "no_show") return "no_show";
+    if (attendance === "cancelled") return "cancelled";
+    if (attendance === "rescheduled") return "reschedule_needed";
+
+    if (confirmation === "confirmed") return "confirmed";
+
+    if (appointment === "completed") return "showed";
+    if (appointment === "confirmed") return "confirmed";
+    if (appointment === "booked") return "booked";
+    if (appointment === "no_show") return "no_show";
+    if (appointment === "cancelled") return "cancelled";
+    if (appointment === "rescheduled") return "reschedule_needed";
+
+    return "booked";
+}
+
 export default function BookingTab({
     activeDateKey,
     availableApartments,
@@ -664,11 +694,39 @@ export default function BookingTab({
             return;
         }
 
+        setLeadSearchMessage("Adding booking...");
+
+        const { data: possibleLeadRows, error: possibleLeadRowsError } = await supabase
+            .from("dashboard_leads")
+            .select("lead_id, lead_name, phone, apt_address")
+            .eq("apt_address", schedule.apt_address);
+
+        if (possibleLeadRowsError) {
+            setLeadSearchMessage(
+                `Could not check matching lead rows: ${possibleLeadRowsError.message}`
+            );
+            return;
+        }
+
+        const matchingLeadByPhoneAndApartment = (possibleLeadRows || []).find((lead) =>
+            phonesMatch(lead.phone, foundLead.phone)
+        );
+
+        const pipelineLeadId =
+            matchingLeadByPhoneAndApartment?.lead_id || foundLead.lead_id || null;
+
+        if (!pipelineLeadId) {
+            setLeadSearchMessage(
+                "No matching lead_id was found, so booking was not added."
+            );
+            return;
+        }
+
         const { error: insertError } = await supabase
             .from("dashboard_showing_appointments")
             .insert({
                 schedule_id: schedule.id,
-                lead_id: foundLead.lead_id,
+                lead_id: pipelineLeadId,
                 lead_name: foundLead.lead_name,
                 phone: foundLead.phone,
                 apt_address: schedule.apt_address,
@@ -684,19 +742,31 @@ export default function BookingTab({
             return;
         }
 
-        if (foundLead.lead_id) {
-            await supabase
-                .from("dashboard_leads")
-                .update({
-                    pipeline_stage: "showing_scheduled",
-                    appointment_status: "booked",
-                    confirmation_status: "pending_confirmation",
-                    attendance_status: "pending",
-                    showing_at: schedule.showing_at,
-                    last_pipeline_update_at: new Date().toISOString(),
-                })
-                .eq("lead_id", foundLead.lead_id);
+        const { data: updatedRows, error: leadUpdateError } = await supabase.rpc(
+            "update_dashboard_lead_booked",
+            {
+                p_lead_id: String(pipelineLeadId),
+                p_showing_at: schedule.showing_at,
+            }
+        );
+
+        if (leadUpdateError) {
+            setLeadSearchMessage(
+                `Booking was added, but pipeline update failed: ${leadUpdateError.message}`
+            );
+            return;
         }
+
+        if (!updatedRows || updatedRows.length === 0) {
+            setLeadSearchMessage(
+                `Booking was added, but the pipeline RPC did not update lead_id ${pipelineLeadId}.`
+            );
+            return;
+        }
+
+        setLeadSearchMessage(
+            `Booking added and pipeline updated to Booked for ${foundLead.lead_name || "lead"}.`
+        );
 
         setTopScheduleDateKey(getDateKeyFromIso(schedule.showing_at));
         closeAddBookingModal();
@@ -748,13 +818,25 @@ export default function BookingTab({
 
             if (field === "appointment_status") {
                 leadUpdate.appointment_status = value;
+                leadUpdate.pipeline_status = getPipelineStatusFromBooking({
+                    appointmentStatus: value,
+                    confirmationStatus: appointment.confirmation_status,
+                    attendanceStatus: appointment.attendance_status,
+                });
             }
 
             if (field === "confirmation_status") {
                 leadUpdate.confirmation_status = value;
+
                 if (value === "confirmed") {
                     leadUpdate.pipeline_stage = "confirmed";
                 }
+
+                leadUpdate.pipeline_status = getPipelineStatusFromBooking({
+                    appointmentStatus: appointment.appointment_status,
+                    confirmationStatus: value,
+                    attendanceStatus: appointment.attendance_status,
+                });
             }
 
             if (field === "attendance_status") {
@@ -764,6 +846,12 @@ export default function BookingTab({
                 if (value === "no_show") leadUpdate.pipeline_stage = "no_show";
                 if (value === "cancelled") leadUpdate.pipeline_stage = "cancelled";
                 if (value === "rescheduled") leadUpdate.pipeline_stage = "rescheduled";
+
+                leadUpdate.pipeline_status = getPipelineStatusFromBooking({
+                    appointmentStatus: appointment.appointment_status,
+                    confirmationStatus: appointment.confirmation_status,
+                    attendanceStatus: value,
+                });
             }
 
             await supabase
@@ -803,6 +891,11 @@ export default function BookingTab({
                 appointment_status: editAppointmentStatus,
                 confirmation_status: editConfirmationStatus,
                 attendance_status: editAttendanceStatus,
+                pipeline_status: getPipelineStatusFromBooking({
+                    appointmentStatus: editAppointmentStatus,
+                    confirmationStatus: editConfirmationStatus,
+                    attendanceStatus: editAttendanceStatus,
+                }),
                 last_pipeline_update_at: new Date().toISOString(),
             };
 
@@ -859,6 +952,7 @@ export default function BookingTab({
                 .from("dashboard_leads")
                 .update({
                     pipeline_stage: "showing_requested",
+                    pipeline_status: "reschedule_needed",
                     appointment_status: null,
                     confirmation_status: null,
                     attendance_status: null,
@@ -980,8 +1074,8 @@ export default function BookingTab({
                             {scheduledAppointments.map((appointment) => (
                                 <div
                                     className={`${styles.appointmentCard} ${isAppointmentConfirmed(appointment)
-                                            ? styles.appointmentCardConfirmed
-                                            : ""
+                                        ? styles.appointmentCardConfirmed
+                                        : ""
                                         }`}
                                     key={appointment.id}
                                     style={{
@@ -1134,8 +1228,8 @@ export default function BookingTab({
                             {confirmedToday.map((appointment) => (
                                 <div
                                     className={`${styles.appointmentCard} ${isAppointmentConfirmed(appointment)
-                                            ? styles.appointmentCardConfirmed
-                                            : ""
+                                        ? styles.appointmentCardConfirmed
+                                        : ""
                                         }`}
                                     key={appointment.id}
                                 >
@@ -1320,8 +1414,8 @@ export default function BookingTab({
                         return (
                             <div
                                 className={`${styles.bookingCalDay} ${cell.dateKey === topScheduleDateKey
-                                        ? styles.bookingToday
-                                        : ""
+                                    ? styles.bookingToday
+                                    : ""
                                     }`}
                                 key={cell.dateKey}
                                 onClick={() => {
@@ -1412,8 +1506,8 @@ export default function BookingTab({
                                             dayAppointments.map((appointment) => (
                                                 <div
                                                     className={`${styles.calendarLeadCard} ${isAppointmentConfirmed(appointment)
-                                                            ? styles.appointmentCardConfirmed
-                                                            : ""
+                                                        ? styles.appointmentCardConfirmed
+                                                        : ""
                                                         }`}
                                                     key={appointment.id}
                                                     onClick={(event) => event.stopPropagation()}
@@ -1521,8 +1615,8 @@ export default function BookingTab({
                                         key={time.value}
                                         type="button"
                                         className={`${styles.commonTimeButton} ${scheduleTime === time.value
-                                                ? styles.commonTimeButtonActive
-                                                : ""
+                                            ? styles.commonTimeButtonActive
+                                            : ""
                                             }`}
                                         onClick={() => setScheduleTime(time.value)}
                                     >

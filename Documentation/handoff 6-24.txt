@@ -1,0 +1,725 @@
+Mission Control Messages Automation — Continuation Handoff
+1. Main Goal
+
+We are turning the Mission Control dashboard into the control center for SMS automation.
+
+Current target flow:
+
+n8n sends intro SMS
+→ Quo/OpenPhone receives lead reply
+→ Mission Control checks new messages
+→ safe rule decides:
+   clean intro + positive reply = send requirements later
+   anything else = Human Review
+→ auto-clicker sends SMS later
+→ Supabase pipeline updates immediately after successful send
+
+Long-term architecture:
+
+Mission Control :3002
+= automation monitor, Human Review, pipeline visibility
+
+QuoSender :3000
+= template builder/admin only for now
+
+Auto-clicker :3001
+= actual SMS send engine
+
+Supabase
+= lead pipeline, messages, human review, decisions, automation checkpoint
+2. Current Rule Being Implemented
+
+First automation rule is intentionally conservative.
+
+Auto-send candidate
+
+Only proceed toward 02_requirements_request_v1 when the Quo/OpenPhone thread is exactly:
+
+1 outgoing intro message from us
++
+1 positive inbound reply from lead
+
+Examples of positive replies:
+
+yes
+yeah
+interested
+available
+schedule
+showing
+tour
+see
+today
+tomorrow
+Sunday
+Monday
+Human Review
+
+Send to Human Review if:
+
+conversation has more than clean intro + one reply
+reply is not clearly positive
+wrong number / stop / not interested
+missing phoneNumberId or participants
+no matching lead later
+multiple matching leads later
+auto-clicker fails later
+pipeline update fails later
+
+This protects against the same phone applying for different apartments.
+
+3. Important Existing Supabase Tables
+
+The handoff/schema confirmed these existing tables should be reused:
+
+public.dashboard_leads
+public.dashboard_leads_clean
+public.messages
+public.conversations
+public.templates
+public.human_escalations
+public.ai_decisions
+public.dashboard_leads
+
+This is the live pipeline source table.
+
+Important columns:
+
+lead_id text
+lead_name text
+phone text
+apt_address text
+current_status text
+conversation_stage text
+last_inbound_sms text
+last_inbound_at text
+last_outbound_sms text
+last_outbound_at text
+needs_human_review text
+stop_automation text
+last_pipeline_update_at text
+updated_at timestamptz
+pipeline_status text
+
+After requirements SMS is successfully sent later, update:
+
+conversation_stage = requirements_sent
+pipeline_status = requirements_sent
+last_inbound_sms = inbound reply
+last_inbound_at = now()::text
+last_outbound_sms = requirements template
+last_outbound_at = now()::text
+needs_human_review = false
+last_pipeline_update_at = now()::text
+updated_at = now()
+
+The dashboard reads the cleaned view:
+
+public.dashboard_leads_clean
+public.human_escalations
+
+Use this for Human Review. Do not create a duplicate review table.
+
+Important columns:
+
+id bigint
+created_at timestamptz
+updated_at timestamptz
+lead_id bigint
+property_id bigint
+conversation_id bigint
+message_id bigint
+phone text
+reason text
+priority text
+status text
+assigned_to text
+human_notes text
+resolved_at timestamptz
+
+Automation review rows currently use:
+
+reason = automation:<reason>
+status = open
+priority = normal
+phone = normalized phone
+human_notes = JSON string with Quo context
+public.ai_decisions
+
+Use this for automation decision/timeline logs.
+
+Important columns:
+
+id bigint
+created_at timestamptz
+message_id bigint
+conversation_id bigint
+lead_id bigint
+property_id bigint
+intent text
+confidence numeric
+matched_template_id bigint
+decision text
+reply_text text
+needs_human boolean
+human_reason text
+should_send boolean
+sent boolean
+error text
+model_used text
+prompt_version text
+
+Current prompt/version marker:
+
+prompt_version = message_automation_v1
+model_used = rule_based
+intent = intro_reply_requirements
+4. New Table Created
+
+We created one small new table because no existing automation state/checkpoint table existed.
+
+create table if not exists public.message_automation_state (
+  id text primary key,
+  polling_enabled boolean not null default false,
+  interval_minutes integer not null default 2,
+  status text not null default 'idle',
+  last_checked_at timestamptz,
+  updated_at timestamptz not null default now()
+);
+
+insert into public.message_automation_state (
+  id,
+  polling_enabled,
+  interval_minutes,
+  status
+)
+values (
+  'main',
+  false,
+  2,
+  'idle'
+)
+on conflict (id) do nothing;
+
+Purpose:
+
+Stores polling status
+Stores interval
+Stores current automation status
+Stores last_checked_at checkpoint
+Persists after page refresh
+5. Files Currently Involved
+Mission Control project root
+mission-control-dashboard/
+Existing important files
+app/page.tsx
+components/messages/MessagesTab.tsx
+components/messages/MessagesTab.module.css
+lib/quo.ts
+lib/supabase.ts
+.env.local
+tsconfig.json
+New API route files
+app/api/messages-automation/monitor/route.ts
+app/api/messages-automation/run-now/route.ts
+Existing Quo API files
+app/api/quo/conversations/route.ts
+app/api/quo/conversations/[id]/messages/route.ts
+
+Or depending on current local structure, the messages route may still be:
+
+app/api/quo/conversations/[id]/route.ts
+
+Need to standardize later to:
+
+app/api/quo/conversations/[id]/messages/route.ts
+6. Current lib/quo.ts Requirements
+
+Important fix made/needed: Quo/OpenPhone conversations return participants like:
+
+8622851232
+
+but /v1/messages requires E.164:
+
++18622851232
+
+So lib/quo.ts must normalize participants before appending them to the query.
+
+Required helper:
+
+function normalizeParticipantPhone(phone: string) {
+  const trimmed = String(phone || "").trim();
+
+  if (trimmed.startsWith("+")) {
+    return trimmed;
+  }
+
+  const digits = trimmed.replace(/\D/g, "");
+
+  if (digits.length === 10) {
+    return `+1${digits}`;
+  }
+
+  if (digits.length === 11 && digits.startsWith("1")) {
+    return `+${digits}`;
+  }
+
+  return trimmed;
+}
+
+And in listQuoMessages:
+
+for (const participant of params.participants) {
+  const normalizedParticipant = normalizeParticipantPhone(participant);
+
+  if (normalizedParticipant) {
+    query.append("participants", normalizedParticipant);
+  }
+}
+
+Quo message directions observed:
+
+outgoing
+received
+
+So direction helpers must treat:
+
+outgoing = outbound
+received = inbound
+7. Supabase Client Situation
+
+There was confusion with lib/supabase.ts.
+
+Correct setup going forward
+
+Keep lib/supabase.ts as the browser anon client because app/page.tsx imports:
+
+import { supabase } from "../lib/supabase";
+
+Recommended lib/supabase.ts:
+
+import { createClient } from "@supabase/supabase-js";
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+if (!supabaseUrl) {
+  throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL");
+}
+
+if (!supabaseAnonKey) {
+  throw new Error("Missing NEXT_PUBLIC_SUPABASE_ANON_KEY");
+}
+
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
+Create a separate server-only client later if needed:
+
+lib/supabase-server.ts
+
+Recommended content:
+
+import { createClient } from "@supabase/supabase-js";
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+if (!supabaseUrl) {
+  throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL");
+}
+
+if (!supabaseServiceRoleKey) {
+  throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY");
+}
+
+export const supabaseServer = createClient(
+  supabaseUrl,
+  supabaseServiceRoleKey,
+  {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  }
+);
+
+API routes should import server client using whichever file actually exists. If supabaseServer is still inside lib/supabase.ts, then routes should use:
+
+import { supabaseServer } from "@/lib/supabase";
+
+If separate file is created, use:
+
+import { supabaseServer } from "@/lib/supabase-server";
+
+Important: do not break page.tsx by removing the supabase export.
+
+8. Environment Variables Needed
+
+.env.local should have:
+
+NEXT_PUBLIC_SUPABASE_URL=...
+NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+SUPABASE_SERVICE_ROLE_KEY=...
+
+QUO_API_KEY=...
+QUO_BASE_URL=https://api.openphone.com
+QUO_PRIMARY_INBOX_ID=PNAO2aXSml
+
+Known inbox IDs:
+
+Primary inbox: PNAO2aXSml
+
+Observed primary number:
+
+(201) 350-1990
+
+Mission Control runs on:
+
+localhost:3002
+
+QuoSender template builder runs on:
+
+localhost:3000
+
+Auto-clicker/send server will run on:
+
+localhost:3001
+9. Current UI State
+components/messages/MessagesTab.tsx
+
+Messages tab has been changed from raw Quo inbox/chat view into an automation monitor.
+
+Current sections:
+
+Automation Status
+Queue Summary
+Processing Timeline
+Needs Human Review
+Pipeline Update Rule
+Raw Quo Inbox Debug View toggle
+Current behavior
+
+Run Now calls:
+
+POST /api/messages-automation/run-now
+
+It:
+
+fetches Quo conversations
+fetches messages for each conversation
+compares with message_automation_state.last_checked_at
+logs decisions into ai_decisions
+creates Human Review rows in human_escalations
+updates message_automation_state
+Polling
+
+Start Polling sets:
+
+message_automation_state.polling_enabled = true
+
+Frontend polling uses setInterval while the tab is open.
+
+Important limitation:
+
+Polling is not a server cron/background worker yet.
+It only runs while Mission Control page is open.
+
+Later options:
+
+Use n8n to call /api/messages-automation/run-now every 2 minutes
+or create a proper server cron/worker.
+10. Current Known Issue
+
+A new message appeared in OpenPhone but did not appear in dashboard because:
+
+message_automation_state.last_checked_at was already newer than that message
+
+Fixes planned:
+
+A. Clear Monitor should reset checkpoint
+
+In:
+
+app/api/messages-automation/monitor/route.ts
+
+DELETE() should update state with:
+
+{
+  polling_enabled: false,
+  status: "idle",
+  last_checked_at: null,
+  updated_at: new Date().toISOString()
+}
+B. Add Rescan Latest button
+
+In MessagesTab.tsx, add a second button:
+
+Rescan Latest
+
+It should call:
+
+POST /api/messages-automation/run-now?ignoreCheckpoint=1
+
+This lets us test/reprocess latest messages without waiting for a new timestamp.
+
+11. CSS Update Needed
+
+Logs currently expand the page too much.
+
+Add/confirm this in:
+
+components/messages/MessagesTab.module.css
+.timeline {
+  max-height: 360px;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+
+.reviewList {
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+
+.timeline::-webkit-scrollbar,
+.reviewList::-webkit-scrollbar {
+  width: 8px;
+}
+
+.timeline::-webkit-scrollbar-track,
+.reviewList::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 999px;
+}
+
+.timeline::-webkit-scrollbar-thumb,
+.reviewList::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 999px;
+}
+
+.timeline::-webkit-scrollbar-thumb:hover,
+.reviewList::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+If .reviewList already exists, only add:
+
+max-height: 320px;
+overflow-y: auto;
+padding-right: 6px;
+12. Current Decision Logic
+
+Located in:
+
+app/api/messages-automation/run-now/route.ts
+
+Important helpers:
+
+isInboundMessage()
+isOutboundMessage()
+isOurIntroMessage()
+isPositiveReply()
+decideConversation()
+
+Current safe rule:
+
+if (ordered.length === 1 && isOurIntroMessage(ordered[0])) {
+  return wait_for_reply;
+}
+
+if (
+  ordered.length === 2 &&
+  isOurIntroMessage(ordered[0]) &&
+  isInboundMessage(ordered[1]) &&
+  isPositiveReply(inboundText)
+) {
+  return send_requirements;
+}
+
+return human_review;
+
+Potential issue:
+
+The current logic checks entire ordered thread length. That is intentionally conservative. But user also wants “new messages since last checked” logic. Later refine to inspect:
+
+new messages above last_checked_at
+plus immediate prior intro context
+
+Current version may send older active conversations to Human Review if rescanned with ignoreCheckpoint=1.
+
+13. Next Steps
+Step 1 — Stabilize current monitor
+
+Finish these patches:
+
+A. Clear Monitor resets last_checked_at to null
+B. Add Rescan Latest button
+C. Make timeline/review logs scrollable
+D. Confirm routes use correct Supabase import
+E. Confirm service role env is present
+Step 2 — Persist polling properly
+
+Current polling only runs while browser is open.
+
+Better next option:
+
+n8n cron every 2 minutes
+→ POST http://localhost:3002/api/messages-automation/run-now
+
+This makes checking independent of the dashboard being open.
+
+Step 3 — Lead matching
+
+Before sending requirements, implement lead lookup using existing function/table.
+
+Need safe lookup:
+
+phone matches exactly one eligible lead
+current_status = contacted
+conversation_stage = intro_sent
+stop_automation != true
+needs_human_review != true
+
+Handoff had proposed function:
+
+public.find_single_contacted_lead_for_auto_reply(text)
+
+If not created yet, create/fix it.
+
+Step 4 — Template source
+
+For now:
+
+QuoSender :3000 = template builder
+
+Need to decide template source for actual send:
+
+Option A:
+
+Fetch 02_requirements_request_v1 from QuoSender /templates
+
+Option B:
+
+Copy templates to public.templates and fetch from Supabase
+
+Long-term better option:
+
+public.templates
+
+Handoff says public.templates exists with:
+
+template_name
+template_type
+channel
+stage
+intent
+content
+requires_human_approval
+is_active
+priority
+
+Need to insert:
+
+02_requirements_request_v1
+Step 5 — Auto-clicker send
+
+Add route later:
+
+app/api/messages-automation/send-requirements/route.ts
+
+It should:
+
+receive decision/phone/lead/template
+call auto-clicker :3001
+if success:
+  update dashboard_leads to requirements_sent
+  update ai_decisions.sent = true
+if failure:
+  create human_escalation
+Step 6 — Pipeline update after send
+
+Use or create RPC:
+
+public.mark_lead_requirements_sent(
+  p_lead_id text,
+  p_inbound_sms text,
+  p_outbound_sms text
+)
+
+Expected update:
+
+current_status = contacted
+conversation_stage = requirements_sent
+pipeline_status = requirements_sent
+needs_human_review = false
+last_inbound_sms = p_inbound_sms
+last_inbound_at = now()::text
+last_outbound_sms = p_outbound_sms
+last_outbound_at = now()::text
+last_pipeline_update_at = now()::text
+updated_at = now()
+Step 7 — Human Review tab
+
+Messages tab only shows preview. Later Human Review tab should:
+
+read public.human_escalations
+show failed/ambiguous items
+open manual workspace
+choose template
+send through auto-clicker
+resolve escalation
+update pipeline if sent
+
+QuoSender Schedule Booking frame can be adapted here, not in Messages tab.
+
+14. Testing Commands / URLs
+Conversations test
+http://localhost:3002/api/quo/conversations?limit=100
+Messages test
+
+Use normalized participant:
+
+http://localhost:3002/api/quo/conversations/<conversationId>/messages?phoneNumberId=PNAO2aXSml&participants=%2B18622851232&limit=10
+
+Do not use:
+
+participants=8622851232
+
+because OpenPhone messages API requires:
+
++18622851232
+Run monitor
+POST http://localhost:3002/api/messages-automation/run-now
+Rescan latest
+POST http://localhost:3002/api/messages-automation/run-now?ignoreCheckpoint=1
+Fetch persisted monitor
+GET http://localhost:3002/api/messages-automation/monitor
+15. Current Status Summary
+
+Done:
+
+Messages tab redesigned as Automation Monitor
+Quo conversation fetch works
+Quo message fetch fixed via E.164 participant normalization
+safe decision logic built
+Human Review decisions created for non-clean conversations
+monitor state table created
+planned persistence using ai_decisions and human_escalations
+
+Not done yet:
+
+Actual SMS sending
+Auto-clicker :3001 connection
+Lead lookup by phone
+Template render/fetch for 02_requirements_request_v1
+Pipeline update to requirements_sent
+Human Review manual send workspace
+Server-side cron/background polling
+
+The next immediate coding task should be:
+
+Patch monitor route Clear Monitor to reset last_checked_at
+Add Rescan Latest button
+Make timeline/review logs scrollable
+Then test Run Now + Rescan Latest against a known new OpenPhone reply
