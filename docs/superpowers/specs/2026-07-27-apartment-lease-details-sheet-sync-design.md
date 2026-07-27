@@ -99,15 +99,16 @@ The n8n "Google Sheets account" credential turned out to be an OAuth user-login 
 ```
 "Save to Sheet" button (RentvineTab, new apartment details table)
   → POST /api/rentvine/apartment-details/:id/push-sheet (Next.js, our server)
-      → POST to an n8n Webhook URL, body: { rowKey, address, unit, activation2, expiration2 }
-          → n8n workflow: Webhook → Google Sheets (Update Row, matched on RowKey column) → Respond to Webhook
+      → POST to an n8n Webhook URL, body: { address, unit, activation2, expiration2 }
+          → n8n workflow: Webhook → read all sheet rows → find row matching Address+Room Floor (Code node) → write F/G cells by explicit range (HTTP Request node, raw Sheets API values.update) → Respond to Webhook
       → our route relays n8n's response back to the browser
 ```
 
 - **Row matching:** the sheet has repeated `Address` values across multiple units (e.g. "1208 43rd St" appears once per room) and no unique ID column, and its second Activation/Expiration column pair (F/G) shares the exact same header text as the first pair (D/E) — both problems ruled out matching/mapping by column name. No sheet changes are made (confirmed: skip adding any helper column, skip renaming headers). Instead, the n8n workflow reads all rows, filters for the one matching `Address` + `Room Floor` in a Code node to get its `row_number`, then writes directly to that row's F/G cells via a raw Google Sheets API `values.update` call on an explicit range (`Sheet1!F{row}:G{row}`) — bypassing column-name mapping entirely. See `docs/superpowers/n8n-mission-control-update-renewal-dates.json` (workflow to import) and its companion `...-SETUP.md`.
 - **Write scope:** only Activation 2 / Expiration 2 (sheet columns F/G) are written, leaving Notes/Lease Sent/etc. untouched.
-- **n8n webhook URL:** stored as a server-only env var (e.g. `N8N_APARTMENT_SHEET_WEBHOOK_URL`) in `.env.local`, same trust boundary as other server secrets — never exposed to the browser.
-- If no row matches the `RowKey` in the sheet, the n8n workflow appends a new row rather than failing silently (mirrors the original design intent, now implemented in n8n instead of application code).
+- **n8n webhook URL:** stored as a server-only env var `N8N_APARTMENT_SHEET_WEBHOOK_URL` in `.env.local` (already set), same trust boundary as other server secrets — never exposed to the browser.
+- If no row matches Address+Room Floor in the sheet, the n8n workflow's Code node throws, which surfaces back through our route as a clear "Save to Sheet" failure (not a silent no-op, and not an auto-append — appending was the original intent but the final n8n workflow errors instead, which is simpler and safer for existing rows).
+- The n8n workflow (`docs/superpowers/n8n-mission-control-update-renewal-dates.json`) has already been imported into n8n, credentials fixed, and is ready to receive webhook calls at the URL now stored in `.env.local`. Not yet end-to-end tested with a real write.
 
 ## Rentvine write (renewal dates only)
 
