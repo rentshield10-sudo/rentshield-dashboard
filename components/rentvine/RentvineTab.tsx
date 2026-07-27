@@ -23,6 +23,7 @@ interface RenewalRow {
   currentBalance: string;
   overdueBalance: string;
   hasOverdueBalance: boolean;
+  statusColor: "expired" | "expiring_soon" | "ok";
 }
 
 type ApiResponse =
@@ -95,12 +96,28 @@ export default function RentvineTab() {
   const [errorMessage, setErrorMessage] = useState("");
   const [errorDetail, setErrorDetail] = useState("");
 
-  async function fetchRenewals() {
+  async function syncNow() {
     setStatus("loading");
     setErrorMessage("");
     setErrorDetail("");
 
     try {
+      const syncRes = await fetch("/api/rentvine/lease-sync", {
+        method: "POST",
+        cache: "no-store",
+      });
+      const syncJson: { ok: boolean; error?: string; detail?: unknown; synced?: number } =
+        await syncRes.json();
+
+      if (!syncJson.ok) {
+        setErrorMessage(syncJson.error || "Sync failed.");
+        setErrorDetail(
+          syncJson.detail !== undefined ? JSON.stringify(syncJson.detail, null, 2) : "",
+        );
+        setStatus("error");
+        return;
+      }
+
       const res = await fetch("/api/rentvine/lease-renewals", { cache: "no-store" });
       const json: ApiResponse = await res.json();
 
@@ -143,10 +160,10 @@ export default function RentvineTab() {
             <button
               type="button"
               className={styles.primaryButton}
-              onClick={fetchRenewals}
+              onClick={syncNow}
               disabled={isLoading}
             >
-              {isLoading ? "Fetching..." : "Fetch Renewals"}
+              {isLoading ? "Syncing..." : "Sync Now"}
             </button>
             {fetchedAt && (
               <p className={styles.lastFetched}>
@@ -170,7 +187,7 @@ export default function RentvineTab() {
       {status === "idle" && (
         <div className={styles.prompt}>
           <div className={styles.promptTitle}>No data loaded</div>
-          <div>Press &quot;Fetch Renewals&quot; to load lease renewals from Rentvine.</div>
+          <div>Press &quot;Sync Now&quot; to pull lease renewals from Rentvine into Supabase.</div>
         </div>
       )}
 
@@ -218,9 +235,15 @@ export default function RentvineTab() {
                       const days = r.daysUntilEnd !== null ? parseInt(r.daysUntilEnd) : null;
                       const isUrgent = days !== null && days <= 30;
                       const isPast = days !== null && days < 0;
+                      const rowClass =
+                        r.statusColor === "expired"
+                          ? styles.rowExpired
+                          : r.statusColor === "expiring_soon"
+                            ? styles.rowExpiringSoon
+                            : undefined;
 
                       return (
-                        <tr key={`${r.source}-${r.leaseID}`}>
+                        <tr key={`${r.source}-${r.leaseID}`} className={rowClass}>
                           <td>
                             <span className={r.source === "renewal" ? styles.badge : styles.badgeGray}>
                               {r.source === "renewal" ? "Renewal" : "Expiring"}

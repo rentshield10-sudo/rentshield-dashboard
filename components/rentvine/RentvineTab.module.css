@@ -288,3 +288,21 @@
     color: #0f172a;
     margin-bottom: 8px;
 }
+
+/* ── Row status tints ────────────────────────────────────────────────────── */
+
+.rowExpired td {
+    background: #fef2f2;
+}
+
+.rowExpired:hover td {
+    background: #fee2e2;
+}
+
+.rowExpiringSoon td {
+    background: #fffbeb;
+}
+
+.rowExpiringSoon:hover td {
+    background: #fef3c7;
+}
