@@ -174,6 +174,7 @@ export interface ApartmentDetailRow {
   rentvineLeaseId: string;
   rentvineUnitId: string;
   rentvineLeaseRenewalId: string;
+  isActive: boolean;
 }
 
 const APARTMENT_FETCH_MAX_PAGES = 50;
@@ -255,6 +256,12 @@ export async function fetchAllApartmentDetails(): Promise<ApartmentDetailRow[]> 
       rentvineLeaseId: leaseId,
       rentvineUnitId: String(unit?.unitID ?? ""),
       rentvineLeaseRenewalId: String(renewal?.leaseRenewalID ?? ""),
+      // leaseStatusID "2" = Active in Rentvine, the same value used to filter
+      // "/leases?leaseStatusID=2" elsewhere in this file. A unit can have
+      // multiple lease records (e.g. a past tenant who moved out plus the
+      // current tenant) sharing the same (address, unit) — isActive lets the
+      // sync route prefer the current lease over a closed one when deduping.
+      isActive: String(lease?.leaseStatusID ?? "") === "2",
     };
   });
 }
