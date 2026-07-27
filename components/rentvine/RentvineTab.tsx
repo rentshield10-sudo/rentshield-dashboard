@@ -348,8 +348,8 @@ export default function RentvineTab() {
   }
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- loadApartmentDetails sets loading state synchronously as its first line; this mount-only fetch is intentional and matches the established pattern in this codebase (see components/messages/MessagesTab.tsx)
     loadApartmentDetails();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const isLoading = status === "loading";
