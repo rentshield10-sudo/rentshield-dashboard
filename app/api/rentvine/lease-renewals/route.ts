@@ -14,9 +14,7 @@ function computeStatus(leaseEnd: string | null): {
   const end = new Date(leaseEnd);
   if (isNaN(end.getTime())) return { daysUntilEnd: null, statusColor: "ok" };
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  end.setHours(0, 0, 0, 0);
+  const today = new Date(new Date().toISOString().slice(0, 10));
 
   const msPerDay = 1000 * 60 * 60 * 24;
   const daysUntilEnd = Math.round((end.getTime() - today.getTime()) / msPerDay);
