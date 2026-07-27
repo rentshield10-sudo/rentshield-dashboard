@@ -306,3 +306,57 @@
 .rowExpiringSoon:hover td {
     background: #fef3c7;
 }
+
+/* ── Apartment details table extras ─────────────────────────────────────── */
+
+.rowHighlighted td {
+    background: #eff6ff;
+}
+
+.rowHighlighted:hover td {
+    background: #dbeafe;
+}
+
+.dateInput {
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    padding: 4px 6px;
+    font-size: 11px;
+    font-family: inherit;
+    color: #111827;
+    width: 130px;
+}
+
+.rowActions {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+
+.smallButton {
+    border: 1px solid #d1d5db;
+    border-radius: 999px;
+    padding: 3px 8px;
+    font-size: 10px;
+    font-weight: 700;
+    cursor: pointer;
+    white-space: nowrap;
+    background: #ffffff;
+    color: #374151;
+}
+
+.smallButton:hover:not(:disabled) {
+    background: #f3f4f6;
+}
+
+.smallButton:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.rowActionError {
+    margin-top: 4px;
+    font-size: 10px;
+    color: #b91c1c;
+    max-width: 160px;
+}
