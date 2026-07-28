@@ -795,7 +795,7 @@ export default function RentvineTab() {
                         )}
                       </td>
                       <td className={styles.stickyActions}>
-                        <div className={styles.rowActions}>
+                        <div className={styles.rowActionsVertical}>
                           <button
                             type="button"
                             className={styles.smallButton}

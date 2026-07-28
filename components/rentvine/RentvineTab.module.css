@@ -387,6 +387,13 @@
     flex-wrap: nowrap;
 }
 
+.rowActionsVertical {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
+}
+
 .smallButton {
     border: 1px solid #d1d5db;
     border-radius: 999px;
