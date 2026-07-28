@@ -403,3 +403,8 @@
     color: #b91c1c;
     max-width: 160px;
 }
+
+.fileInput {
+    font-size: 10px;
+    max-width: 150px;
+}

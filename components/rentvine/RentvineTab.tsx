@@ -136,9 +136,22 @@ export default function RentvineTab() {
   const [apartmentStatus, setApartmentStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [apartmentErrorMessage, setApartmentErrorMessage] = useState("");
   const [apartmentErrorDetail, setApartmentErrorDetail] = useState("");
-  const [editedDates, setEditedDates] = useState<Record<number, { activation2: string; expiration2: string }>>({});
+  type EditableField = "activation1" | "expiration1" | "activation2" | "expiration2" | "currentRent";
+
+  interface EditedFields {
+    activation1: string;
+    expiration1: string;
+    activation2: string;
+    expiration2: string;
+    currentRent: string;
+  }
+
+  const [editedFields, setEditedFields] = useState<Record<number, EditedFields>>({});
   const [rowActionStatus, setRowActionStatus] = useState<Record<number, RowActionStatus>>({});
   const [focusedApartmentRowId, setFocusedApartmentRowId] = useState<number | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<Record<number, File | null>>({});
+  const [extractStatus, setExtractStatus] = useState<Record<number, "idle" | "extracting" | "error">>({});
+  const [extractErrorMessage, setExtractErrorMessage] = useState<Record<number, string>>({});
 
   async function syncNow() {
     setStatus("loading");
@@ -231,30 +244,26 @@ export default function RentvineTab() {
     }
   }
 
-  function getEditedActivation2(row: ApartmentDetailRow): string {
-    return editedDates[row.id]?.activation2 ?? row.activation_2 ?? "";
+  function defaultEditedFields(row: ApartmentDetailRow): EditedFields {
+    return {
+      activation1: row.activation_1 ?? "",
+      expiration1: row.expiration_1 ?? "",
+      activation2: row.activation_2 ?? "",
+      expiration2: row.expiration_2 ?? "",
+      currentRent: row.current_rent !== null ? String(row.current_rent) : "",
+    };
   }
 
-  function getEditedExpiration2(row: ApartmentDetailRow): string {
-    return editedDates[row.id]?.expiration2 ?? row.expiration_2 ?? "";
+  function getEditedField(row: ApartmentDetailRow, field: EditableField): string {
+    return editedFields[row.id]?.[field] ?? defaultEditedFields(row)[field];
   }
 
-  function setEditedActivation2(row: ApartmentDetailRow, value: string) {
-    setEditedDates((prev) => ({
+  function setEditedField(row: ApartmentDetailRow, field: EditableField, value: string) {
+    setEditedFields((prev) => ({
       ...prev,
       [row.id]: {
-        activation2: value,
-        expiration2: prev[row.id]?.expiration2 ?? row.expiration_2 ?? "",
-      },
-    }));
-  }
-
-  function setEditedExpiration2(row: ApartmentDetailRow, value: string) {
-    setEditedDates((prev) => ({
-      ...prev,
-      [row.id]: {
-        activation2: prev[row.id]?.activation2 ?? row.activation_2 ?? "",
-        expiration2: value,
+        ...(prev[row.id] ?? defaultEditedFields(row)),
+        [field]: value,
       },
     }));
   }
@@ -274,12 +283,15 @@ export default function RentvineTab() {
   async function saveToSupabase(row: ApartmentDetailRow) {
     setRowStatus(row.id, { supabase: "saving", errorMessage: undefined });
     try {
-      const activation2 = getEditedActivation2(row);
-      const expiration2 = getEditedExpiration2(row);
+      const activation1 = getEditedField(row, "activation1");
+      const expiration1 = getEditedField(row, "expiration1");
+      const activation2 = getEditedField(row, "activation2");
+      const expiration2 = getEditedField(row, "expiration2");
+      const currentRent = getEditedField(row, "currentRent");
       const res = await fetch(`/api/rentvine/apartment-details/${row.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ activation2, expiration2 }),
+        body: JSON.stringify({ activation1, expiration1, activation2, expiration2, currentRent }),
       });
       const json: { ok: boolean; error?: string; row?: ApartmentDetailRow } = await res.json();
       if (!json.ok || !json.row) {
@@ -290,11 +302,19 @@ export default function RentvineTab() {
       setApartmentRows((prev) =>
         prev.map((r) =>
           r.id === row.id
-            ? { ...r, activation_2: updatedRow.activation_2, expiration_2: updatedRow.expiration_2, updated_at: updatedRow.updated_at }
+            ? {
+                ...r,
+                activation_1: updatedRow.activation_1,
+                expiration_1: updatedRow.expiration_1,
+                activation_2: updatedRow.activation_2,
+                expiration_2: updatedRow.expiration_2,
+                current_rent: updatedRow.current_rent,
+                updated_at: updatedRow.updated_at,
+              }
             : r,
         ),
       );
-      setEditedDates((prev) => {
+      setEditedFields((prev) => {
         const next = { ...prev };
         delete next[row.id];
         return next;
@@ -348,8 +368,67 @@ export default function RentvineTab() {
     }
   }
 
+  function handleFileSelected(row: ApartmentDetailRow, fileList: FileList | null) {
+    setSelectedFiles((prev) => ({ ...prev, [row.id]: fileList?.[0] ?? null }));
+  }
+
+  async function extractFromPdf(row: ApartmentDetailRow) {
+    const file = selectedFiles[row.id];
+    if (!file) {
+      setExtractStatus((prev) => ({ ...prev, [row.id]: "error" }));
+      setExtractErrorMessage((prev) => ({ ...prev, [row.id]: "Choose a PDF file first." }));
+      return;
+    }
+
+    setExtractStatus((prev) => ({ ...prev, [row.id]: "extracting" }));
+    setExtractErrorMessage((prev) => ({ ...prev, [row.id]: "" }));
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const res = await fetch(`/api/rentvine/apartment-details/${row.id}/extract-pdf`, {
+        method: "POST",
+        body: formData,
+      });
+      const json: {
+        ok: boolean;
+        error?: string;
+        activation1?: string;
+        expiration1?: string;
+        currentRent?: number;
+      } = await res.json();
+
+      if (!json.ok) {
+        setExtractStatus((prev) => ({ ...prev, [row.id]: "error" }));
+        setExtractErrorMessage((prev) => ({ ...prev, [row.id]: json.error || "Extraction failed." }));
+        return;
+      }
+
+      setEditedFields((prev) => {
+        const existing = prev[row.id] ?? defaultEditedFields(row);
+        return {
+          ...prev,
+          [row.id]: {
+            ...existing,
+            activation1: json.activation1 ?? existing.activation1,
+            expiration1: json.expiration1 ?? existing.expiration1,
+            currentRent: json.currentRent !== undefined ? String(json.currentRent) : existing.currentRent,
+          },
+        };
+      });
+
+      setExtractStatus((prev) => ({ ...prev, [row.id]: "idle" }));
+    } catch (err) {
+      setExtractStatus((prev) => ({ ...prev, [row.id]: "error" }));
+      setExtractErrorMessage((prev) => ({
+        ...prev,
+        [row.id]: err instanceof Error ? err.message : "Unexpected error.",
+      }));
+    }
+  }
+
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- loadApartmentDetails sets loading state synchronously as its first line; this mount-only fetch is intentional and matches the established pattern in this codebase (see components/messages/MessagesTab.tsx)
     loadApartmentDetails();
   }, []);
 
@@ -605,6 +684,7 @@ export default function RentvineTab() {
                   <th>Current Rent</th>
                   <th>Security Deposit</th>
                   <th>Notes</th>
+                  <th>Extract PDF</th>
                   <th className={styles.stickyActionsHeader}>Actions</th>
                 </tr>
               </thead>
@@ -633,29 +713,73 @@ export default function RentvineTab() {
                           <span className={styles.muted}>—</span>
                         )}
                       </td>
-                      <td><span className={styles.mono}>{formatDate(row.activation_1)}</span></td>
-                      <td><span className={styles.mono}>{formatDate(row.expiration_1)}</span></td>
+                      <td>
+                        <input
+                          type="date"
+                          className={styles.dateInput}
+                          value={getEditedField(row, "activation1")}
+                          onChange={(e) => setEditedField(row, "activation1", e.target.value)}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          type="date"
+                          className={styles.dateInput}
+                          value={getEditedField(row, "expiration1")}
+                          onChange={(e) => setEditedField(row, "expiration1", e.target.value)}
+                        />
+                      </td>
                       <td>
                         <input
                           id={`apartment-activation2-${row.id}`}
                           type="date"
                           className={styles.dateInput}
-                          value={getEditedActivation2(row)}
-                          onChange={(e) => setEditedActivation2(row, e.target.value)}
+                          value={getEditedField(row, "activation2")}
+                          onChange={(e) => setEditedField(row, "activation2", e.target.value)}
                         />
                       </td>
                       <td>
                         <input
                           type="date"
                           className={styles.dateInput}
-                          value={getEditedExpiration2(row)}
-                          onChange={(e) => setEditedExpiration2(row, e.target.value)}
+                          value={getEditedField(row, "expiration2")}
+                          onChange={(e) => setEditedField(row, "expiration2", e.target.value)}
                         />
                       </td>
                       <td>{formatCurrency(row.new_rent !== null ? String(row.new_rent) : null)}</td>
-                      <td>{formatCurrency(row.current_rent !== null ? String(row.current_rent) : null)}</td>
+                      <td>
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          className={styles.dateInput}
+                          value={getEditedField(row, "currentRent")}
+                          onChange={(e) => setEditedField(row, "currentRent", e.target.value)}
+                        />
+                      </td>
                       <td>{formatCurrency(row.security_deposit !== null ? String(row.security_deposit) : null)}</td>
                       <td>{row.notes || <span className={styles.muted}>—</span>}</td>
+                      <td>
+                        <div className={styles.rowActions}>
+                          <input
+                            type="file"
+                            accept="application/pdf"
+                            className={styles.fileInput}
+                            onChange={(e) => handleFileSelected(row, e.target.files)}
+                          />
+                          <button
+                            type="button"
+                            className={styles.smallButton}
+                            onClick={() => extractFromPdf(row)}
+                            disabled={extractStatus[row.id] === "extracting"}
+                          >
+                            {extractStatus[row.id] === "extracting" ? "..." : "Extract"}
+                          </button>
+                        </div>
+                        {extractStatus[row.id] === "error" && extractErrorMessage[row.id] && (
+                          <div className={styles.rowActionError}>{extractErrorMessage[row.id]}</div>
+                        )}
+                      </td>
                       <td className={styles.stickyActions}>
                         <div className={styles.rowActions}>
                           <button
