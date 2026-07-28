@@ -10,6 +10,12 @@ function toDateOrNull(value: unknown): string | null {
   return s ? s : null;
 }
 
+function toNumberOrNull(value: unknown): number | null {
+  if (value === undefined || value === null || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
 export async function PATCH(
   request: Request,
   context: { params: Promise<{ id: string }> | { id: string } },
@@ -18,18 +24,26 @@ export async function PATCH(
     const { id } = await getParams(context);
     const body = await request.json();
 
+    const activation1 = toDateOrNull(body?.activation1);
+    const expiration1 = toDateOrNull(body?.expiration1);
     const activation2 = toDateOrNull(body?.activation2);
     const expiration2 = toDateOrNull(body?.expiration2);
+    const currentRent = toNumberOrNull(body?.currentRent);
 
     const { data, error } = await supabaseServer
       .from("apartment_lease_details")
       .update({
+        activation_1: activation1,
+        expiration_1: expiration1,
         activation_2: activation2,
         expiration_2: expiration2,
+        current_rent: currentRent,
         updated_at: new Date().toISOString(),
       })
       .eq("id", id)
-      .select("id, address, unit, activation_2, expiration_2, updated_at")
+      .select(
+        "id, address, unit, activation_1, expiration_1, activation_2, expiration_2, current_rent, updated_at",
+      )
       .single();
 
     if (error) throw error;
