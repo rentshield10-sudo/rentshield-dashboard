@@ -861,7 +861,7 @@ export default function RentvineTab() {
                         />
                       </td>
                       <td>
-                        <div className={styles.rowActions}>
+                        <div className={styles.rowActionsVertical}>
                           <input
                             type="file"
                             accept="application/pdf"
