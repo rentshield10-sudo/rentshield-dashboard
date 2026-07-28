@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { PDFParse } from "pdf-parse";
 
-const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
+// Kept under Vercel's ~4.5MB serverless request body ceiling so oversized
+// uploads fail with our own JSON error instead of the platform's HTML page.
+const MAX_FILE_SIZE_BYTES = 4 * 1024 * 1024; // 4MB
 
 function convertUsDateToIso(value: string): string | null {
   const match = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);

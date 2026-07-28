@@ -467,8 +467,22 @@ export default function RentvineTab() {
     }
   }
 
+  const MAX_PDF_UPLOAD_BYTES = 4 * 1024 * 1024; // 4MB, matches the server-side limit
+
   function handleFileSelected(row: ApartmentDetailRow, fileList: FileList | null) {
-    setSelectedFiles((prev) => ({ ...prev, [row.id]: fileList?.[0] ?? null }));
+    const file = fileList?.[0] ?? null;
+    if (file && file.size > MAX_PDF_UPLOAD_BYTES) {
+      setSelectedFiles((prev) => ({ ...prev, [row.id]: null }));
+      setExtractStatus((prev) => ({ ...prev, [row.id]: "error" }));
+      setExtractErrorMessage((prev) => ({
+        ...prev,
+        [row.id]: "File is too large (max 4MB). Try a smaller/compressed PDF.",
+      }));
+      return;
+    }
+    setSelectedFiles((prev) => ({ ...prev, [row.id]: file }));
+    setExtractStatus((prev) => ({ ...prev, [row.id]: "idle" }));
+    setExtractErrorMessage((prev) => ({ ...prev, [row.id]: "" }));
   }
 
   async function extractFromPdf(row: ApartmentDetailRow) {
@@ -490,6 +504,20 @@ export default function RentvineTab() {
         method: "POST",
         body: formData,
       });
+
+      const contentType = res.headers.get("content-type") || "";
+      if (!contentType.includes("application/json")) {
+        setExtractStatus((prev) => ({ ...prev, [row.id]: "error" }));
+        setExtractErrorMessage((prev) => ({
+          ...prev,
+          [row.id]:
+            res.status === 413
+              ? "File is too large for the server to accept (try a smaller PDF)."
+              : `Server error (status ${res.status}). The file may be too large or the request timed out.`,
+        }));
+        return;
+      }
+
       const json: {
         ok: boolean;
         error?: string;
