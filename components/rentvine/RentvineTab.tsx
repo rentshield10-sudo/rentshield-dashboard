@@ -763,9 +763,13 @@ export default function RentvineTab() {
                       <td>{row.unit || <span className={styles.muted}>—</span>}</td>
                       <td>
                         {row.tenant_name ? (
-                          <span className={styles.tenantCell} title={row.tenant_name}>
-                            {row.tenant_name}
-                          </span>
+                          <div className={styles.tenantList} title={row.tenant_name}>
+                            {row.tenant_name.split(",").map((name) => name.trim()).filter(Boolean).map((name, i) => (
+                              <span key={i} className={styles.tenantCell}>
+                                {name}
+                              </span>
+                            ))}
+                          </div>
                         ) : (
                           <span className={styles.muted}>—</span>
                         )}
@@ -843,6 +847,7 @@ export default function RentvineTab() {
                             accept="application/pdf"
                             className={styles.fileInput}
                             onChange={(e) => handleFileSelected(row, e.target.files)}
+                            disabled={extractStatus[row.id] === "extracting"}
                           />
                           <button
                             type="button"
@@ -850,9 +855,18 @@ export default function RentvineTab() {
                             onClick={() => extractFromPdf(row)}
                             disabled={extractStatus[row.id] === "extracting"}
                           >
-                            {extractStatus[row.id] === "extracting" ? "..." : "Extract"}
+                            {extractStatus[row.id] === "extracting" ? (
+                              <span className={styles.spinner} />
+                            ) : (
+                              "Extract"
+                            )}
                           </button>
                         </div>
+                        {selectedFiles[row.id] && (
+                          <div className={styles.fileName} title={selectedFiles[row.id]?.name}>
+                            {selectedFiles[row.id]?.name}
+                          </div>
+                        )}
                         {extractStatus[row.id] === "error" && extractErrorMessage[row.id] && (
                           <div className={styles.rowActionError}>{extractErrorMessage[row.id]}</div>
                         )}

@@ -409,6 +409,12 @@
     width: 56px;
 }
 
+.tenantList {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
 .tenantCell {
     display: block;
     max-width: 160px;
@@ -478,6 +484,37 @@
 
 .fileInput::file-selector-button:hover {
     background: #f3f4f6;
+}
+
+.fileInput:disabled::file-selector-button {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.fileName {
+    margin-top: 3px;
+    font-size: 9px;
+    color: #374151;
+    max-width: 110px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.spinner {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border: 2px solid #d1d5db;
+    border-top-color: #374151;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 /* ── Resizable columns (All Apartments table only) ──────────────────────── */
