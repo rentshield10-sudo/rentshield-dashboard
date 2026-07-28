@@ -550,13 +550,14 @@
     word-break: break-word;
 }
 
-.thResizable {
+.table th.thResizable {
     position: relative;
     overflow: visible;
     white-space: normal;
     overflow-wrap: break-word;
     word-break: break-word;
     vertical-align: bottom;
+    padding-right: 12px;
 }
 
 .resizeHandle {
