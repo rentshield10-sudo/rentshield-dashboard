@@ -1,12 +1,25 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import BookingTab from "../components/booking/BookingTab";
+import dynamic from "next/dynamic";
 import { supabase } from "../lib/supabase";
 import styles from "./page.module.css";
-import LeadsTab from "../components/leads/LeadsTab";
-import MessagesTab from "../components/messages/MessagesTab";
-import RentvineTab from "../components/rentvine/RentvineTab";
+
+// Loaded on demand (not bundled into the initial page compile) so switching
+// tabs only compiles the tab you're actually viewing, instead of every tab's
+// code compiling together on first load.
+const BookingTab = dynamic(() => import("../components/booking/BookingTab"), {
+  loading: () => <div style={{ padding: 24 }}>Loading Booking…</div>,
+});
+const LeadsTab = dynamic(() => import("../components/leads/LeadsTab"), {
+  loading: () => <div style={{ padding: 24 }}>Loading Leads…</div>,
+});
+const MessagesTab = dynamic(() => import("../components/messages/MessagesTab"), {
+  loading: () => <div style={{ padding: 24 }}>Loading Messages…</div>,
+});
+const RentvineTab = dynamic(() => import("../components/rentvine/RentvineTab"), {
+  loading: () => <div style={{ padding: 24 }}>Loading Rentvine…</div>,
+});
 
 type DashboardApartment = {
   apt_address: string;

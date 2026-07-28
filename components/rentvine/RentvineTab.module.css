@@ -317,6 +317,23 @@
     background: #dbeafe;
 }
 
+.rowFocused td {
+    background: #fde047;
+    box-shadow: inset 0 0 0 3px #ca8a04;
+    position: relative;
+    z-index: 1;
+    animation: rowFocusPulse 0.9s ease-in-out 3;
+}
+
+@keyframes rowFocusPulse {
+    0%, 100% {
+        background: #fde047;
+    }
+    50% {
+        background: #fef08a;
+    }
+}
+
 .dateInput {
     border: 1px solid #d1d5db;
     border-radius: 6px;

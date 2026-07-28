@@ -1,19 +1,21 @@
 .layout {
-    min-height: 100vh;
+    height: 100vh;
     display: flex;
     background: #f4f7fb;
     color: #111827;
     font-family: Inter, Arial, sans-serif;
     font-size: 13px;
+    overflow: hidden;
 }
 
 .sidebar {
     width: 190px;
-    min-height: 100vh;
+    height: 100vh;
     background: #0f172a;
     color: white;
     padding: 18px 12px;
     flex-shrink: 0;
+    overflow-y: auto;
 }
 
 .brand {
@@ -78,9 +80,10 @@
 
 .mainPane {
     flex: 1;
-    min-height: 100vh;
+    height: 100vh;
     padding: 14px;
     overflow-x: hidden;
+    overflow-y: auto;
 }
 
 .liveCard,

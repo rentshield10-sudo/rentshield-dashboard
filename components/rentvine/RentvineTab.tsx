@@ -138,6 +138,7 @@ export default function RentvineTab() {
   const [apartmentErrorDetail, setApartmentErrorDetail] = useState("");
   const [editedDates, setEditedDates] = useState<Record<number, { activation2: string; expiration2: string }>>({});
   const [rowActionStatus, setRowActionStatus] = useState<Record<number, RowActionStatus>>({});
+  const [focusedApartmentRowId, setFocusedApartmentRowId] = useState<number | null>(null);
 
   async function syncNow() {
     setStatus("loading");
@@ -352,6 +353,39 @@ export default function RentvineTab() {
     loadApartmentDetails();
   }, []);
 
+  function normalizeAddressUnitKey(address: string, unit: string): string {
+    return `${address.trim().toLowerCase()}|${unit.trim().toLowerCase()}`;
+  }
+
+  function processRenewal(address: string, unit: string) {
+    const key = normalizeAddressUnitKey(address, unit);
+    const match = apartmentRows.find(
+      (row) => normalizeAddressUnitKey(row.address, row.unit) === key,
+    );
+
+    if (!match) {
+      // Apartment inventory not loaded yet (or no matching unit found) —
+      // load it so the next click has data to scroll to.
+      loadApartmentDetails();
+      return;
+    }
+
+    setFocusedApartmentRowId(match.id);
+
+    requestAnimationFrame(() => {
+      document
+        .getElementById(`apartment-row-${match.id}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+      (
+        document.getElementById(`apartment-activation2-${match.id}`) as HTMLInputElement | null
+      )?.focus();
+    });
+
+    window.setTimeout(() => {
+      setFocusedApartmentRowId((current) => (current === match.id ? null : current));
+    }, 5000);
+  }
+
   const isLoading = status === "loading";
   const formalCount = renewals.filter((r) => r.source === "renewal").length;
   const expiringCount = renewals.filter((r) => r.source === "expiring").length;
@@ -444,6 +478,7 @@ export default function RentvineTab() {
                       <th>Days Left</th>
                       <th>Rent</th>
                       <th>Balance</th>
+                      <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -492,6 +527,15 @@ export default function RentvineTab() {
                             ) : (
                               <span className={styles.muted}>{formatCurrency(r.currentBalance)}</span>
                             )}
+                          </td>
+                          <td>
+                            <button
+                              type="button"
+                              className={styles.smallButton}
+                              onClick={() => processRenewal(r.address, r.unit)}
+                            >
+                              Process
+                            </button>
                           </td>
                         </tr>
                       );
@@ -568,10 +612,16 @@ export default function RentvineTab() {
                 {apartmentRows.map((row) => {
                   const key = `${row.address.trim().toLowerCase()}|${row.unit.trim().toLowerCase()}`;
                   const isHighlighted = highlightKeys.has(key);
+                  const isFocused = row.id === focusedApartmentRowId;
                   const actionStatus = rowActionStatus[row.id];
+                  const rowClass = isFocused
+                    ? styles.rowFocused
+                    : isHighlighted
+                      ? styles.rowHighlighted
+                      : undefined;
 
                   return (
-                    <tr key={row.id} className={isHighlighted ? styles.rowHighlighted : undefined}>
+                    <tr id={`apartment-row-${row.id}`} key={row.id} className={rowClass}>
                       <td>{row.address}</td>
                       <td>{row.unit || <span className={styles.muted}>—</span>}</td>
                       <td>{row.tenant_name || <span className={styles.muted}>—</span>}</td>
@@ -579,6 +629,7 @@ export default function RentvineTab() {
                       <td><span className={styles.mono}>{formatDate(row.expiration_1)}</span></td>
                       <td>
                         <input
+                          id={`apartment-activation2-${row.id}`}
                           type="date"
                           className={styles.dateInput}
                           value={getEditedActivation2(row)}
