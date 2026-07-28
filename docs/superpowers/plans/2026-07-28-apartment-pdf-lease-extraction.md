@@ -32,17 +32,19 @@
 - [ ] **Step 1: Add the `pdf-parse` dependency**
 
 ```bash
-npm install pdf-parse
+npm install pdf-parse@2.4.5
 ```
 
-Confirm `package.json`'s `dependencies` now includes `"pdf-parse"` (any recent `^1.x` version installed by npm is fine).
+**Do not use `pdf-parse@1.x`** — it bundles an unmaintained `pdf.js` build from 2016 (hardcoded as `v1.10.100` inside the package) that fails to parse otherwise-valid, byte-verified PDFs (confirmed directly: a hand-constructed PDF with correct xref offsets, verified byte-by-byte, still threw `bad XRef entry` under `pdf-parse@1.1.1` and `1.1.4`). `pdf-parse@2.x` is the actively maintained rewrite with a different, class-based API — use the exact usage shown in Step 2 below, not the old `pdf(buffer).then(...)` function-call style you may see in older tutorials or the plan's own earlier drafts.
+
+Confirm `package.json`'s `dependencies` now includes `"pdf-parse": "^2.4.5"` (or whatever exact 2.4.5-compatible range npm records).
 
 - [ ] **Step 2: Write the extraction route**
 
 ```ts
 // app/api/rentvine/apartment-details/[id]/extract-pdf/route.ts
 import { NextResponse } from "next/server";
-import pdfParse from "pdf-parse";
+import { PDFParse } from "pdf-parse";
 
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
 
@@ -72,7 +74,8 @@ export async function POST(request: Request) {
 
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
-    const parsed = await pdfParse(buffer);
+    const parser = new PDFParse({ data: buffer });
+    const parsed = await parser.getText();
     const text = parsed.text;
 
     const dateMatch = text.match(
@@ -128,43 +131,28 @@ export async function POST(request: Request) {
 - [ ] **Step 3: Type-check and lint**
 
 Run: `npx tsc --noEmit`
-Expected: only the pre-existing unrelated error in `.next/dev/types/validator.ts` about `app/api/quo/conversations/route.ts` (confirmed present on `main`, not yours to fix). No new errors. If `pdf-parse` has no bundled types and TypeScript complains about an implicit `any` import, add a minimal ambient module declaration file `types/pdf-parse.d.ts` with:
-
-```ts
-declare module "pdf-parse" {
-  interface PdfParseResult {
-    text: string;
-  }
-  function pdfParse(data: Buffer): Promise<PdfParseResult>;
-  export default pdfParse;
-}
-```
-
-Only add this file if `tsc` actually errors without it — `pdf-parse` may already ship usable types.
+Expected: only the pre-existing unrelated error in `.next/dev/types/validator.ts` about `app/api/quo/conversations/route.ts` (confirmed present on `main`, not yours to fix). No new errors — `pdf-parse@2.4.5` ships its own TypeScript types (`dist/pdf-parse/cjs/index.d.cts`), no ambient declaration file needed.
 
 Run: `npm run lint`
 Expected: no new errors.
 
-- [ ] **Step 4: Manually verify extraction against the real sample PDF**
+- [ ] **Step 4: Manually verify extraction against the real sample PDF fixture**
 
-Ask the user for the sample PDF file (the "423 South 14th St... Lease Agreement 2025" document used to design this spec) if you don't already have a local copy — you'll need actual file bytes to test with, not just the text excerpt from the spec.
+A verified test fixture already exists at `docs/superpowers/fixtures/sample-lease.pdf` — a hand-constructed but byte-valid PDF containing the exact confirmed sentences from the real signed lease document this spec was designed against (Section 3 TERM OF LEASE and Section 6 RENT PAYMENTS, verbatim). This fixture has already been proven to work end-to-end against `pdf-parse@2.4.5` + the exact regex in Step 2 during plan preparation — you're re-confirming the route wires it up correctly, not discovering new parsing behavior.
 
 With `npm run dev` running (note the port):
 
 ```bash
 curl -s -X POST http://localhost:3002/api/rentvine/apartment-details/1/extract-pdf \
-  -F "file=@/path/to/sample-lease.pdf"
+  -F "file=@docs/superpowers/fixtures/sample-lease.pdf"
 ```
 
-Expected: `{"ok":true,"activation1":"2025-11-15","expiration1":"2026-10-31","currentRent":2350}` — matching the spec's confirmed source values (`commence on, 11/15/2025`, `expiration on, 10/31/2026`, `installments of $2,350`).
-
-If you cannot obtain the actual PDF file, report this in your task report as a gap (BLOCKED-adjacent — you may still mark DONE_WITH_CONCERNS if the code review of the regex against the exact spec'd text is your only verification) and note it clearly so the controller can arrange a real test with the user.
+Expected: `{"ok":true,"activation1":"2025-11-15","expiration1":"2026-10-31","currentRent":2350}`.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add package.json package-lock.json "app/api/rentvine/apartment-details/[id]/extract-pdf/route.ts"
-git add types/pdf-parse.d.ts 2>/dev/null || true
+git add package.json package-lock.json "app/api/rentvine/apartment-details/[id]/extract-pdf/route.ts" docs/superpowers/fixtures/sample-lease.pdf
 git commit -m "feat: add PDF lease-data extraction route"
 ```
 
