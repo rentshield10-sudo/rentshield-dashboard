@@ -409,6 +409,17 @@
     width: 56px;
 }
 
+.notesInput {
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    padding: 2px 4px;
+    font-size: 10px;
+    font-family: inherit;
+    color: #111827;
+    width: 100%;
+    box-sizing: border-box;
+}
+
 .tenantList {
     display: flex;
     flex-direction: column;

@@ -136,7 +136,13 @@ export default function RentvineTab() {
   const [apartmentStatus, setApartmentStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [apartmentErrorMessage, setApartmentErrorMessage] = useState("");
   const [apartmentErrorDetail, setApartmentErrorDetail] = useState("");
-  type EditableField = "activation1" | "expiration1" | "activation2" | "expiration2" | "currentRent";
+  type EditableField =
+    | "activation1"
+    | "expiration1"
+    | "activation2"
+    | "expiration2"
+    | "currentRent"
+    | "notes";
 
   interface EditedFields {
     activation1: string;
@@ -144,6 +150,7 @@ export default function RentvineTab() {
     activation2: string;
     expiration2: string;
     currentRent: string;
+    notes: string;
   }
 
   const [editedFields, setEditedFields] = useState<Record<number, EditedFields>>({});
@@ -156,10 +163,10 @@ export default function RentvineTab() {
   const APARTMENT_COLUMN_LABELS = [
     "Address", "Unit", "Tenant", "Activation 1", "Expiration 1",
     "Activation 2", "Expiration 2", "New Rent", "Current Rent",
-    "Security Deposit", "Notes", "Extract PDF",
+    "Security Deposit", "Lease Status", "Notes", "Extract PDF",
   ];
   const [columnWidths, setColumnWidths] = useState<number[]>([
-    140, 60, 140, 76, 76, 76, 76, 80, 66, 100, 120, 110,
+    140, 60, 140, 76, 76, 76, 76, 80, 66, 100, 90, 120, 110,
   ]);
   const resizingColRef = useRef<{ index: number; startX: number; startWidth: number } | null>(null);
 
@@ -291,6 +298,7 @@ export default function RentvineTab() {
       activation2: row.activation_2 ?? "",
       expiration2: row.expiration_2 ?? "",
       currentRent: row.current_rent !== null ? String(row.current_rent) : "",
+      notes: row.notes ?? "",
     };
   }
 
@@ -328,10 +336,11 @@ export default function RentvineTab() {
       const activation2 = getEditedField(row, "activation2");
       const expiration2 = getEditedField(row, "expiration2");
       const currentRent = getEditedField(row, "currentRent");
+      const notes = getEditedField(row, "notes");
       const res = await fetch(`/api/rentvine/apartment-details/${row.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ activation1, expiration1, activation2, expiration2, currentRent }),
+        body: JSON.stringify({ activation1, expiration1, activation2, expiration2, currentRent, notes }),
       });
       const json: { ok: boolean; error?: string; row?: ApartmentDetailRow } = await res.json();
       if (!json.ok || !json.row) {
@@ -349,6 +358,7 @@ export default function RentvineTab() {
                 activation_2: updatedRow.activation_2,
                 expiration_2: updatedRow.expiration_2,
                 current_rent: updatedRow.current_rent,
+                notes: updatedRow.notes,
                 updated_at: updatedRow.updated_at,
               }
             : r,
@@ -839,7 +849,17 @@ export default function RentvineTab() {
                         />
                       </td>
                       <td>{formatCurrency(row.security_deposit !== null ? String(row.security_deposit) : null)}</td>
-                      <td>{row.notes || <span className={styles.muted}>—</span>}</td>
+                      <td>
+                        {row.lease_status || <span className={styles.muted}>—</span>}
+                      </td>
+                      <td>
+                        <input
+                          type="text"
+                          className={styles.notesInput}
+                          value={getEditedField(row, "notes")}
+                          onChange={(e) => setEditedField(row, "notes", e.target.value)}
+                        />
+                      </td>
                       <td>
                         <div className={styles.rowActions}>
                           <input
