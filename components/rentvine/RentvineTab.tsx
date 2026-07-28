@@ -683,7 +683,7 @@ export default function RentvineTab() {
           <div className={styles.cardHeader}>
             <span className={styles.cardTitle}>All Apartments</span>
           </div>
-          <div className={styles.tableWrap}>
+          <div className={`${styles.tableWrap} ${styles.tableWrapScroll}`}>
             <table className={styles.table}>
               <thead>
                 <tr>
