@@ -280,7 +280,7 @@ export default function RentvineTab() {
     }));
   }
 
-  async function saveToSupabase(row: ApartmentDetailRow) {
+  async function saveToSupabase(row: ApartmentDetailRow): Promise<boolean> {
     setRowStatus(row.id, { supabase: "saving", errorMessage: undefined });
     try {
       const activation1 = getEditedField(row, "activation1");
@@ -296,7 +296,7 @@ export default function RentvineTab() {
       const json: { ok: boolean; error?: string; row?: ApartmentDetailRow } = await res.json();
       if (!json.ok || !json.row) {
         setRowStatus(row.id, { supabase: "error", errorMessage: json.error || "Save failed." });
-        return;
+        return false;
       }
       const updatedRow = json.row;
       setApartmentRows((prev) =>
@@ -320,17 +320,31 @@ export default function RentvineTab() {
         return next;
       });
       setRowStatus(row.id, { supabase: "success" });
+      return true;
     } catch (err) {
       setRowStatus(row.id, {
         supabase: "error",
         errorMessage: err instanceof Error ? err.message : "Unexpected error.",
       });
+      return false;
     }
   }
 
   async function saveToSheet(row: ApartmentDetailRow) {
     setRowStatus(row.id, { sheet: "saving", errorMessage: undefined });
     try {
+      // Save to Sheet reads the row's current values from Supabase, not
+      // pending in-browser edits — persist first so the sheet reflects
+      // what's actually on screen, not stale DB state.
+      const saved = await saveToSupabase(row);
+      if (!saved) {
+        setRowStatus(row.id, {
+          sheet: "error",
+          errorMessage: "Could not save to Supabase first, so nothing was pushed to the Sheet.",
+        });
+        return;
+      }
+      setRowStatus(row.id, { sheet: "saving", errorMessage: undefined });
       const res = await fetch(`/api/rentvine/apartment-details/${row.id}/push-sheet`, {
         method: "POST",
       });
