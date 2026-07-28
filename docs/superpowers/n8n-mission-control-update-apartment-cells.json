@@ -1,0 +1,138 @@
+{
+  "name": "Mission Control - Update Apartment Cells (Batch)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "mission-control/update-apartment-cells",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [200, 300],
+      "webhookId": "mission-control-update-apartment-cells"
+    },
+    {
+      "parameters": {
+        "resource": "sheet",
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "1i9Q3Bcul0C4tYwfUTHw6dYjKtEq6LGSOMRm4k115UGg",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list"
+        },
+        "options": {}
+      },
+      "id": "get-all-rows",
+      "name": "Get All Rows",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [420, 300],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $('Webhook').first().json.body;\nconst targetAddress = String(body.address || '').trim().toLowerCase();\nconst targetUnit = String(body.unit || '').trim().toLowerCase();\nconst cells = body.cells || {};\n\nconst match = items.find((item) => {\n  const addr = String(item.json['Address'] || '').trim().toLowerCase();\n  const unit = String(item.json['Room Floor'] || '').trim().toLowerCase();\n  return addr === targetAddress && unit === targetUnit;\n});\n\nif (!match) {\n  throw new Error(`No sheet row found matching address \"${targetAddress}\" + unit \"${targetUnit}\"`);\n}\n\nconst rowNumber = match.json.row_number;\nconst columns = Object.keys(cells);\n\nif (columns.length === 0) {\n  throw new Error('No cells provided to write.');\n}\n\nconst data = columns.map((col) => ({\n  range: `Sheet1!${col}${rowNumber}:${col}${rowNumber}`,\n  values: [[cells[col]]]\n}));\n\nreturn [{ json: { data } }];"
+      },
+      "id": "find-matching-row",
+      "name": "Find Matching Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [640, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://sheets.googleapis.com/v4/spreadsheets/1i9Q3Bcul0C4tYwfUTHw6dYjKtEq6LGSOMRm4k115UGg/values:batchUpdate",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleSheetsOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { valueInputOption: \"USER_ENTERED\", data: $json.data } }}",
+        "options": {}
+      },
+      "id": "batch-write-cells",
+      "name": "Batch Write Cells",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [860, 300],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, response: $json } }}",
+        "options": {}
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1080, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Get All Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get All Rows": {
+      "main": [
+        [
+          {
+            "node": "Find Matching Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Matching Row": {
+      "main": [
+        [
+          {
+            "node": "Batch Write Cells",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Batch Write Cells": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
