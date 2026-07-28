@@ -22,7 +22,7 @@ export async function POST(
 
     const { data: row, error: fetchError } = await supabaseServer
       .from("apartment_lease_details")
-      .select("address, unit, activation_2, expiration_2")
+      .select("address, unit, activation_1, expiration_1, activation_2, expiration_2, current_rent")
       .eq("id", id)
       .single();
 
@@ -34,14 +34,20 @@ export async function POST(
       );
     }
 
+    const cells: Record<string, string> = {};
+    if (row.activation_1) cells.D = row.activation_1;
+    if (row.expiration_1) cells.E = row.expiration_1;
+    if (row.activation_2) cells.F = row.activation_2;
+    if (row.expiration_2) cells.G = row.expiration_2;
+    if (row.current_rent !== null) cells.I = String(row.current_rent);
+
     const n8nRes = await fetch(webhookUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         address: row.address,
         unit: row.unit,
-        activation2: row.activation_2,
-        expiration2: row.expiration_2,
+        cells,
       }),
     });
 
