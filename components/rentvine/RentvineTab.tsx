@@ -159,7 +159,7 @@ export default function RentvineTab() {
     "Security Deposit", "Notes", "Extract PDF",
   ];
   const [columnWidths, setColumnWidths] = useState<number[]>([
-    140, 60, 140, 100, 100, 120, 120, 80, 90, 100, 120, 110,
+    140, 60, 140, 76, 76, 76, 76, 80, 66, 100, 120, 110,
   ]);
   const resizingColRef = useRef<{ index: number; startX: number; startWidth: number } | null>(null);
 
@@ -186,6 +186,11 @@ export default function RentvineTab() {
     resizingColRef.current = { index, startX: e.clientX, startWidth: columnWidths[index] };
     document.addEventListener("mousemove", handleResizeMouseMove);
     document.addEventListener("mouseup", handleResizeMouseUp);
+  }
+
+  function openDatePicker(e: React.MouseEvent<HTMLButtonElement>) {
+    const input = e.currentTarget.parentElement?.querySelector("input");
+    input?.showPicker?.();
   }
 
   async function syncNow() {
@@ -766,37 +771,57 @@ export default function RentvineTab() {
                         )}
                       </td>
                       <td>
-                        <input
-                          type="date"
-                          className={styles.dateInput}
-                          value={getEditedField(row, "activation1")}
-                          onChange={(e) => setEditedField(row, "activation1", e.target.value)}
-                        />
+                        <div className={styles.dateWrap}>
+                          <button type="button" className={styles.dateIconButton} onClick={openDatePicker}>
+                            📅
+                          </button>
+                          <input
+                            type="date"
+                            className={styles.dateInput}
+                            value={getEditedField(row, "activation1")}
+                            onChange={(e) => setEditedField(row, "activation1", e.target.value)}
+                          />
+                        </div>
                       </td>
                       <td>
-                        <input
-                          type="date"
-                          className={styles.dateInput}
-                          value={getEditedField(row, "expiration1")}
-                          onChange={(e) => setEditedField(row, "expiration1", e.target.value)}
-                        />
+                        <div className={styles.dateWrap}>
+                          <button type="button" className={styles.dateIconButton} onClick={openDatePicker}>
+                            📅
+                          </button>
+                          <input
+                            type="date"
+                            className={styles.dateInput}
+                            value={getEditedField(row, "expiration1")}
+                            onChange={(e) => setEditedField(row, "expiration1", e.target.value)}
+                          />
+                        </div>
                       </td>
                       <td>
-                        <input
-                          id={`apartment-activation2-${row.id}`}
-                          type="date"
-                          className={styles.dateInput}
-                          value={getEditedField(row, "activation2")}
-                          onChange={(e) => setEditedField(row, "activation2", e.target.value)}
-                        />
+                        <div className={styles.dateWrap}>
+                          <button type="button" className={styles.dateIconButton} onClick={openDatePicker}>
+                            📅
+                          </button>
+                          <input
+                            id={`apartment-activation2-${row.id}`}
+                            type="date"
+                            className={styles.dateInput}
+                            value={getEditedField(row, "activation2")}
+                            onChange={(e) => setEditedField(row, "activation2", e.target.value)}
+                          />
+                        </div>
                       </td>
                       <td>
-                        <input
-                          type="date"
-                          className={styles.dateInput}
-                          value={getEditedField(row, "expiration2")}
-                          onChange={(e) => setEditedField(row, "expiration2", e.target.value)}
-                        />
+                        <div className={styles.dateWrap}>
+                          <button type="button" className={styles.dateIconButton} onClick={openDatePicker}>
+                            📅
+                          </button>
+                          <input
+                            type="date"
+                            className={styles.dateInput}
+                            value={getEditedField(row, "expiration2")}
+                            onChange={(e) => setEditedField(row, "expiration2", e.target.value)}
+                          />
+                        </div>
                       </td>
                       <td>{formatCurrency(row.new_rent !== null ? String(row.new_rent) : null)}</td>
                       <td>
@@ -804,7 +829,7 @@ export default function RentvineTab() {
                           type="number"
                           min="0"
                           step="1"
-                          className={styles.dateInput}
+                          className={styles.rentInput}
                           value={getEditedField(row, "currentRent")}
                           onChange={(e) => setEditedField(row, "currentRent", e.target.value)}
                         />

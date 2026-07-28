@@ -363,6 +363,28 @@
     }
 }
 
+.dateWrap {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1px;
+}
+
+.dateIconButton {
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    background: #ffffff;
+    color: #374151;
+    font-size: 8px;
+    line-height: 1;
+    padding: 1px 2px;
+    cursor: pointer;
+}
+
+.dateIconButton:hover {
+    background: #f3f4f6;
+}
+
 .dateInput {
     border: 1px solid #d1d5db;
     border-radius: 6px;
@@ -370,7 +392,21 @@
     font-size: 10px;
     font-family: inherit;
     color: #111827;
-    width: 108px;
+    width: 78px;
+}
+
+.dateInput::-webkit-calendar-picker-indicator {
+    display: none;
+}
+
+.rentInput {
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    padding: 2px 4px;
+    font-size: 10px;
+    font-family: inherit;
+    color: #111827;
+    width: 56px;
 }
 
 .tenantCell {
