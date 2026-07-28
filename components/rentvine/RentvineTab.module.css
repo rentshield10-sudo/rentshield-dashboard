@@ -169,7 +169,7 @@
 .table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 12px;
+    font-size: 11px;
 }
 
 .table thead tr {
@@ -178,20 +178,20 @@
 }
 
 .table th {
-    padding: 10px 14px;
+    padding: 6px 8px;
     text-align: left;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 700;
     color: #6b7280;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.03em;
     text-transform: uppercase;
     white-space: nowrap;
 }
 
 .table td {
-    padding: 10px 14px;
+    padding: 5px 8px;
     border-bottom: 1px solid #f1f5f9;
-    vertical-align: top;
+    vertical-align: middle;
     color: #111827;
 }
 
@@ -337,24 +337,32 @@
 .dateInput {
     border: 1px solid #d1d5db;
     border-radius: 6px;
-    padding: 4px 6px;
-    font-size: 11px;
+    padding: 2px 4px;
+    font-size: 10px;
     font-family: inherit;
     color: #111827;
-    width: 130px;
+    width: 108px;
+}
+
+.tenantCell {
+    display: block;
+    max-width: 160px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .rowActions {
     display: flex;
-    gap: 4px;
-    flex-wrap: wrap;
+    gap: 3px;
+    flex-wrap: nowrap;
 }
 
 .smallButton {
     border: 1px solid #d1d5db;
     border-radius: 999px;
-    padding: 3px 8px;
-    font-size: 10px;
+    padding: 2px 6px;
+    font-size: 9px;
     font-weight: 700;
     cursor: pointer;
     white-space: nowrap;

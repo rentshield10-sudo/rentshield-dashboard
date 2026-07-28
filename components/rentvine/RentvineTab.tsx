@@ -624,7 +624,15 @@ export default function RentvineTab() {
                     <tr id={`apartment-row-${row.id}`} key={row.id} className={rowClass}>
                       <td>{row.address}</td>
                       <td>{row.unit || <span className={styles.muted}>—</span>}</td>
-                      <td>{row.tenant_name || <span className={styles.muted}>—</span>}</td>
+                      <td>
+                        {row.tenant_name ? (
+                          <span className={styles.tenantCell} title={row.tenant_name}>
+                            {row.tenant_name}
+                          </span>
+                        ) : (
+                          <span className={styles.muted}>—</span>
+                        )}
+                      </td>
                       <td><span className={styles.mono}>{formatDate(row.activation_1)}</span></td>
                       <td><span className={styles.mono}>{formatDate(row.expiration_1)}</span></td>
                       <td>
