@@ -40,6 +40,24 @@
     gap: 7px;
 }
 
+.logoutButton {
+    width: 100%;
+    border: 1px solid #334155;
+    color: #cbd5e1;
+    background: transparent;
+    padding: 9px 10px;
+    border-radius: 10px;
+    font-weight: 700;
+    font-size: 12px;
+    cursor: pointer;
+    margin-top: 14px;
+}
+
+.logoutButton:hover {
+    background: #1e293b;
+    color: #ffffff;
+}
+
 .navItem {
     width: 100%;
     border: 0;

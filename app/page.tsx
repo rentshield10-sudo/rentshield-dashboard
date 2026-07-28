@@ -1498,6 +1498,17 @@ export default function DashboardPage() {
             </button>
           ))}
         </nav>
+
+        <button
+          type="button"
+          className={styles.logoutButton}
+          onClick={async () => {
+            await fetch("/api/auth/logout", { method: "POST" });
+            window.location.href = "/login";
+          }}
+        >
+          Log out
+        </button>
       </aside>
 
       <section className={styles.mainPane}>
