@@ -141,7 +141,9 @@ export default function RentvineTab() {
     | "expiration1"
     | "activation2"
     | "expiration2"
+    | "newRent"
     | "currentRent"
+    | "securityDeposit"
     | "notes"
     | "leaseStatus";
 
@@ -150,7 +152,9 @@ export default function RentvineTab() {
     expiration1: string;
     activation2: string;
     expiration2: string;
+    newRent: string;
     currentRent: string;
+    securityDeposit: string;
     notes: string;
     leaseStatus: string;
   }
@@ -309,7 +313,9 @@ export default function RentvineTab() {
       expiration1: row.expiration_1 ?? "",
       activation2: row.activation_2 ?? "",
       expiration2: row.expiration_2 ?? "",
+      newRent: row.new_rent !== null ? String(row.new_rent) : "",
       currentRent: row.current_rent !== null ? String(row.current_rent) : "",
+      securityDeposit: row.security_deposit !== null ? String(row.security_deposit) : "",
       notes: row.notes ?? "",
       leaseStatus: row.lease_status ?? "",
     };
@@ -348,7 +354,9 @@ export default function RentvineTab() {
       const expiration1 = getEditedField(row, "expiration1");
       const activation2 = getEditedField(row, "activation2");
       const expiration2 = getEditedField(row, "expiration2");
+      const newRent = getEditedField(row, "newRent");
       const currentRent = getEditedField(row, "currentRent");
+      const securityDeposit = getEditedField(row, "securityDeposit");
       const notes = getEditedField(row, "notes");
       const leaseStatus = getEditedField(row, "leaseStatus");
       const res = await fetch(`/api/rentvine/apartment-details/${row.id}`, {
@@ -359,7 +367,9 @@ export default function RentvineTab() {
           expiration1,
           activation2,
           expiration2,
+          newRent,
           currentRent,
+          securityDeposit,
           notes,
           leaseStatus,
         }),
@@ -379,7 +389,9 @@ export default function RentvineTab() {
                 expiration_1: updatedRow.expiration_1,
                 activation_2: updatedRow.activation_2,
                 expiration_2: updatedRow.expiration_2,
+                new_rent: updatedRow.new_rent,
                 current_rent: updatedRow.current_rent,
+                security_deposit: updatedRow.security_deposit,
                 notes: updatedRow.notes,
                 lease_status: updatedRow.lease_status,
                 updated_at: updatedRow.updated_at,
@@ -860,7 +872,16 @@ export default function RentvineTab() {
                           />
                         </div>
                       </td>
-                      <td>{formatCurrency(row.new_rent !== null ? String(row.new_rent) : null)}</td>
+                      <td>
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          className={styles.rentInput}
+                          value={getEditedField(row, "newRent")}
+                          onChange={(e) => setEditedField(row, "newRent", e.target.value)}
+                        />
+                      </td>
                       <td>
                         <input
                           type="number"
@@ -871,7 +892,16 @@ export default function RentvineTab() {
                           onChange={(e) => setEditedField(row, "currentRent", e.target.value)}
                         />
                       </td>
-                      <td>{formatCurrency(row.security_deposit !== null ? String(row.security_deposit) : null)}</td>
+                      <td>
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          className={styles.rentInput}
+                          value={getEditedField(row, "securityDeposit")}
+                          onChange={(e) => setEditedField(row, "securityDeposit", e.target.value)}
+                        />
+                      </td>
                       <td>
                         <select
                           className={styles.leaseStatusSelect}

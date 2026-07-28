@@ -28,7 +28,9 @@ export async function PATCH(
     const expiration1 = toDateOrNull(body?.expiration1);
     const activation2 = toDateOrNull(body?.activation2);
     const expiration2 = toDateOrNull(body?.expiration2);
+    const newRent = toNumberOrNull(body?.newRent);
     const currentRent = toNumberOrNull(body?.currentRent);
+    const securityDeposit = toNumberOrNull(body?.securityDeposit);
     const notes = body?.notes !== undefined ? String(body.notes).trim() || null : null;
     const leaseStatus =
       body?.leaseStatus !== undefined ? String(body.leaseStatus).trim() || null : null;
@@ -40,14 +42,16 @@ export async function PATCH(
         expiration_1: expiration1,
         activation_2: activation2,
         expiration_2: expiration2,
+        new_rent: newRent,
         current_rent: currentRent,
+        security_deposit: securityDeposit,
         notes,
         lease_status: leaseStatus,
         updated_at: new Date().toISOString(),
       })
       .eq("id", id)
       .select(
-        "id, address, unit, activation_1, expiration_1, activation_2, expiration_2, current_rent, notes, lease_status, updated_at",
+        "id, address, unit, activation_1, expiration_1, activation_2, expiration_2, new_rent, current_rent, security_deposit, notes, lease_status, updated_at",
       )
       .single();
 
