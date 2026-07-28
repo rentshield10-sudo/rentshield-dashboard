@@ -1,30 +1,37 @@
 import { NextResponse } from "next/server";
+import bcrypt from "bcryptjs";
+import { supabaseServer } from "@/lib/supabase-server";
 import { createSessionToken, SESSION_COOKIE_NAME } from "@/lib/auth";
 
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
-    const username = String(body?.username ?? "");
+    const username = String(body?.username ?? "").trim();
     const password = String(body?.password ?? "");
 
-    const expectedUsername = process.env.AUTH_USERNAME;
-    const expectedPassword = process.env.AUTH_PASSWORD;
-
-    if (!expectedUsername || !expectedPassword) {
-      return NextResponse.json(
-        { ok: false, error: "Login is not configured on the server." },
-        { status: 500 },
-      );
-    }
-
-    if (username !== expectedUsername || password !== expectedPassword) {
+    if (!username || !password) {
       return NextResponse.json(
         { ok: false, error: "Invalid username or password." },
         { status: 401 },
       );
     }
 
-    const token = await createSessionToken(username);
+    const { data: user, error } = await supabaseServer
+      .from("dashboard_users")
+      .select("username, password_hash")
+      .eq("username", username)
+      .maybeSingle();
+
+    if (error) throw error;
+
+    if (!user || !(await bcrypt.compare(password, user.password_hash))) {
+      return NextResponse.json(
+        { ok: false, error: "Invalid username or password." },
+        { status: 401 },
+      );
+    }
+
+    const token = await createSessionToken(user.username);
     const res = NextResponse.json({ ok: true });
     res.cookies.set(SESSION_COOKIE_NAME, token, {
       httpOnly: true,
