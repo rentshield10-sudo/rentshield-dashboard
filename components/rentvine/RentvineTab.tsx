@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import styles from "./RentvineTab.module.css";
 
 // ---------------------------------------------------------------------------
@@ -152,6 +152,41 @@ export default function RentvineTab() {
   const [selectedFiles, setSelectedFiles] = useState<Record<number, File | null>>({});
   const [extractStatus, setExtractStatus] = useState<Record<number, "idle" | "extracting" | "error">>({});
   const [extractErrorMessage, setExtractErrorMessage] = useState<Record<number, string>>({});
+
+  const APARTMENT_COLUMN_LABELS = [
+    "Address", "Unit", "Tenant", "Activation 1", "Expiration 1",
+    "Activation 2", "Expiration 2", "New Rent", "Current Rent",
+    "Security Deposit", "Notes", "Extract PDF",
+  ];
+  const [columnWidths, setColumnWidths] = useState<number[]>([
+    140, 60, 140, 100, 100, 120, 120, 80, 90, 100, 120, 110,
+  ]);
+  const resizingColRef = useRef<{ index: number; startX: number; startWidth: number } | null>(null);
+
+  function handleResizeMouseMove(e: MouseEvent) {
+    const state = resizingColRef.current;
+    if (!state) return;
+    const delta = e.clientX - state.startX;
+    const newWidth = Math.max(40, state.startWidth + delta);
+    setColumnWidths((prev) => {
+      const next = [...prev];
+      next[state.index] = newWidth;
+      return next;
+    });
+  }
+
+  function handleResizeMouseUp() {
+    resizingColRef.current = null;
+    document.removeEventListener("mousemove", handleResizeMouseMove);
+    document.removeEventListener("mouseup", handleResizeMouseUp);
+  }
+
+  function handleResizeMouseDown(index: number, e: React.MouseEvent) {
+    e.preventDefault();
+    resizingColRef.current = { index, startX: e.clientX, startWidth: columnWidths[index] };
+    document.addEventListener("mousemove", handleResizeMouseMove);
+    document.addEventListener("mouseup", handleResizeMouseUp);
+  }
 
   async function syncNow() {
     setStatus("loading");
@@ -684,21 +719,24 @@ export default function RentvineTab() {
             <span className={styles.cardTitle}>All Apartments</span>
           </div>
           <div className={`${styles.tableWrap} ${styles.tableWrapScroll}`}>
-            <table className={styles.table}>
+            <table className={`${styles.table} ${styles.tableResizable}`}>
+              <colgroup>
+                {columnWidths.map((w, i) => (
+                  <col key={i} style={{ width: `${w}px` }} />
+                ))}
+                <col />
+              </colgroup>
               <thead>
                 <tr>
-                  <th>Address</th>
-                  <th>Unit</th>
-                  <th>Tenant</th>
-                  <th>Activation 1</th>
-                  <th>Expiration 1</th>
-                  <th>Activation 2</th>
-                  <th>Expiration 2</th>
-                  <th>New Rent</th>
-                  <th>Current Rent</th>
-                  <th>Security Deposit</th>
-                  <th>Notes</th>
-                  <th>Extract PDF</th>
+                  {APARTMENT_COLUMN_LABELS.map((label, i) => (
+                    <th key={label} className={styles.thResizable}>
+                      {label}
+                      <span
+                        className={styles.resizeHandle}
+                        onMouseDown={(e) => handleResizeMouseDown(i, e)}
+                      />
+                    </th>
+                  ))}
                   <th className={styles.stickyActionsHeader}>Actions</th>
                 </tr>
               </thead>

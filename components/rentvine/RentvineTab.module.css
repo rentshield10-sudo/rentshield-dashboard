@@ -443,3 +443,30 @@
 .fileInput::file-selector-button:hover {
     background: #f3f4f6;
 }
+
+/* ── Resizable columns (All Apartments table only) ──────────────────────── */
+
+.tableResizable {
+    table-layout: fixed;
+}
+
+.thResizable {
+    position: relative;
+    overflow: hidden;
+}
+
+.resizeHandle {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 6px;
+    height: 100%;
+    cursor: col-resize;
+    user-select: none;
+    touch-action: none;
+}
+
+.resizeHandle:hover,
+.resizeHandle:active {
+    background: #93c5fd;
+}
