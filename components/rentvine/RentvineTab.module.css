@@ -203,6 +203,24 @@
     background: #f8fafc;
 }
 
+/* Keeps the Actions column visible when a wide table scrolls horizontally,
+   so the save buttons are never scrolled out of view. */
+.stickyActionsHeader,
+.stickyActions {
+    position: sticky;
+    right: 0;
+    background: #ffffff;
+    box-shadow: -6px 0 8px -6px rgba(15, 23, 42, 0.12);
+}
+
+.stickyActionsHeader {
+    background: #f8fafc;
+}
+
+.table tbody tr:hover .stickyActions {
+    background: #f8fafc;
+}
+
 /* ── Cell helpers ────────────────────────────────────────────────────────── */
 
 .mono {

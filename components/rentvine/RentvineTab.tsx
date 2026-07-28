@@ -478,7 +478,7 @@ export default function RentvineTab() {
                       <th>Days Left</th>
                       <th>Rent</th>
                       <th>Balance</th>
-                      <th>Actions</th>
+                      <th className={styles.stickyActionsHeader}>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -528,7 +528,7 @@ export default function RentvineTab() {
                               <span className={styles.muted}>{formatCurrency(r.currentBalance)}</span>
                             )}
                           </td>
-                          <td>
+                          <td className={styles.stickyActions}>
                             <button
                               type="button"
                               className={styles.smallButton}
@@ -605,7 +605,7 @@ export default function RentvineTab() {
                   <th>Current Rent</th>
                   <th>Security Deposit</th>
                   <th>Notes</th>
-                  <th>Actions</th>
+                  <th className={styles.stickyActionsHeader}>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -656,7 +656,7 @@ export default function RentvineTab() {
                       <td>{formatCurrency(row.current_rent !== null ? String(row.current_rent) : null)}</td>
                       <td>{formatCurrency(row.security_deposit !== null ? String(row.security_deposit) : null)}</td>
                       <td>{row.notes || <span className={styles.muted}>—</span>}</td>
-                      <td>
+                      <td className={styles.stickyActions}>
                         <div className={styles.rowActions}>
                           <button
                             type="button"
