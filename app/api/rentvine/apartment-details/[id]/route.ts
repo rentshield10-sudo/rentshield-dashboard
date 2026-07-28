@@ -30,6 +30,8 @@ export async function PATCH(
     const expiration2 = toDateOrNull(body?.expiration2);
     const currentRent = toNumberOrNull(body?.currentRent);
     const notes = body?.notes !== undefined ? String(body.notes).trim() || null : null;
+    const leaseStatus =
+      body?.leaseStatus !== undefined ? String(body.leaseStatus).trim() || null : null;
 
     const { data, error } = await supabaseServer
       .from("apartment_lease_details")
@@ -40,11 +42,12 @@ export async function PATCH(
         expiration_2: expiration2,
         current_rent: currentRent,
         notes,
+        lease_status: leaseStatus,
         updated_at: new Date().toISOString(),
       })
       .eq("id", id)
       .select(
-        "id, address, unit, activation_1, expiration_1, activation_2, expiration_2, current_rent, notes, updated_at",
+        "id, address, unit, activation_1, expiration_1, activation_2, expiration_2, current_rent, notes, lease_status, updated_at",
       )
       .single();
 

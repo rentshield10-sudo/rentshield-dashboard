@@ -420,6 +420,17 @@
     box-sizing: border-box;
 }
 
+.leaseStatusSelect {
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    padding: 2px 4px;
+    font-size: 10px;
+    font-family: inherit;
+    color: #111827;
+    width: 100%;
+    box-sizing: border-box;
+}
+
 .tenantList {
     display: flex;
     flex-direction: column;
@@ -428,10 +439,9 @@
 
 .tenantCell {
     display: block;
-    max-width: 160px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: normal;
+    overflow-wrap: break-word;
+    word-break: break-word;
 }
 
 .rowActions {
@@ -534,23 +544,44 @@
     table-layout: fixed;
 }
 
+.tableResizable td {
+    white-space: normal;
+    overflow-wrap: break-word;
+    word-break: break-word;
+}
+
 .thResizable {
     position: relative;
-    overflow: hidden;
+    overflow: visible;
+    white-space: normal;
+    overflow-wrap: break-word;
+    word-break: break-word;
+    vertical-align: bottom;
 }
 
 .resizeHandle {
     position: absolute;
     top: 0;
     right: 0;
-    width: 6px;
+    width: 8px;
     height: 100%;
     cursor: col-resize;
     user-select: none;
     touch-action: none;
 }
 
-.resizeHandle:hover,
-.resizeHandle:active {
-    background: #93c5fd;
+.resizeHandle::after {
+    content: "";
+    position: absolute;
+    top: 15%;
+    bottom: 15%;
+    right: 3px;
+    width: 2px;
+    background: #cbd5e1;
+    border-radius: 1px;
+}
+
+.resizeHandle:hover::after,
+.resizeHandle:active::after {
+    background: #2563eb;
 }

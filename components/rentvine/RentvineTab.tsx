@@ -142,7 +142,8 @@ export default function RentvineTab() {
     | "activation2"
     | "expiration2"
     | "currentRent"
-    | "notes";
+    | "notes"
+    | "leaseStatus";
 
   interface EditedFields {
     activation1: string;
@@ -151,7 +152,18 @@ export default function RentvineTab() {
     expiration2: string;
     currentRent: string;
     notes: string;
+    leaseStatus: string;
   }
+
+  const LEASE_STATUS_OPTIONS = [
+    "Active",
+    "Month to Month",
+    "Notice",
+    "Pending Move-In",
+    "Pending Move-Out",
+    "Eviction",
+    "Past",
+  ];
 
   const [editedFields, setEditedFields] = useState<Record<number, EditedFields>>({});
   const [rowActionStatus, setRowActionStatus] = useState<Record<number, RowActionStatus>>({});
@@ -299,6 +311,7 @@ export default function RentvineTab() {
       expiration2: row.expiration_2 ?? "",
       currentRent: row.current_rent !== null ? String(row.current_rent) : "",
       notes: row.notes ?? "",
+      leaseStatus: row.lease_status ?? "",
     };
   }
 
@@ -337,10 +350,19 @@ export default function RentvineTab() {
       const expiration2 = getEditedField(row, "expiration2");
       const currentRent = getEditedField(row, "currentRent");
       const notes = getEditedField(row, "notes");
+      const leaseStatus = getEditedField(row, "leaseStatus");
       const res = await fetch(`/api/rentvine/apartment-details/${row.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ activation1, expiration1, activation2, expiration2, currentRent, notes }),
+        body: JSON.stringify({
+          activation1,
+          expiration1,
+          activation2,
+          expiration2,
+          currentRent,
+          notes,
+          leaseStatus,
+        }),
       });
       const json: { ok: boolean; error?: string; row?: ApartmentDetailRow } = await res.json();
       if (!json.ok || !json.row) {
@@ -359,6 +381,7 @@ export default function RentvineTab() {
                 expiration_2: updatedRow.expiration_2,
                 current_rent: updatedRow.current_rent,
                 notes: updatedRow.notes,
+                lease_status: updatedRow.lease_status,
                 updated_at: updatedRow.updated_at,
               }
             : r,
@@ -850,7 +873,24 @@ export default function RentvineTab() {
                       </td>
                       <td>{formatCurrency(row.security_deposit !== null ? String(row.security_deposit) : null)}</td>
                       <td>
-                        {row.lease_status || <span className={styles.muted}>—</span>}
+                        <select
+                          className={styles.leaseStatusSelect}
+                          value={getEditedField(row, "leaseStatus")}
+                          onChange={(e) => setEditedField(row, "leaseStatus", e.target.value)}
+                        >
+                          <option value="">—</option>
+                          {!LEASE_STATUS_OPTIONS.includes(getEditedField(row, "leaseStatus")) &&
+                            getEditedField(row, "leaseStatus") && (
+                              <option value={getEditedField(row, "leaseStatus")}>
+                                {getEditedField(row, "leaseStatus")}
+                              </option>
+                            )}
+                          {LEASE_STATUS_OPTIONS.map((option) => (
+                            <option key={option} value={option}>
+                              {option}
+                            </option>
+                          ))}
+                        </select>
                       </td>
                       <td>
                         <input
