@@ -586,3 +586,66 @@
 .resizeHandle:active::after {
     background: #2563eb;
 }
+
+/* ── Rentvine confirmation modal ─────────────────────────────────────────── */
+
+.modalOverlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+}
+
+.modalCard {
+    background: #ffffff;
+    border-radius: 16px;
+    padding: 24px;
+    width: 100%;
+    max-width: 440px;
+    box-shadow: 0 20px 40px -12px rgba(15, 23, 42, 0.35);
+}
+
+.modalTitle {
+    margin: 0 0 4px;
+    font-size: 17px;
+    color: #0f172a;
+}
+
+.modalSubtitle {
+    margin: 0 0 16px;
+    font-size: 13px;
+    color: #6b7280;
+}
+
+.modalTable {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    margin-bottom: 20px;
+}
+
+.modalTable th {
+    text-align: left;
+    padding: 6px 8px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.modalTable td {
+    padding: 8px;
+    border-bottom: 1px solid #f1f5f9;
+    color: #111827;
+}
+
+.modalActions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}

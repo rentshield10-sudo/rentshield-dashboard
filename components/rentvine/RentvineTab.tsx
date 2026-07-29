@@ -175,6 +175,12 @@ export default function RentvineTab() {
   const [selectedFiles, setSelectedFiles] = useState<Record<number, File | null>>({});
   const [extractStatus, setExtractStatus] = useState<Record<number, "idle" | "extracting" | "error">>({});
   const [extractErrorMessage, setExtractErrorMessage] = useState<Record<number, string>>({});
+  const [rentvinePreviewLoadingId, setRentvinePreviewLoadingId] = useState<number | null>(null);
+  const [rentvinePreview, setRentvinePreview] = useState<{
+    row: ApartmentDetailRow;
+    current: { startDate: string | null; endDate: string | null };
+    next: { startDate: string | null; endDate: string | null };
+  } | null>(null);
 
   const APARTMENT_COLUMN_LABELS = [
     "Address", "Unit", "Tenant", "Activation 1", "Expiration 1",
@@ -465,6 +471,42 @@ export default function RentvineTab() {
         errorMessage: err instanceof Error ? err.message : "Unexpected error.",
       });
     }
+  }
+
+  async function openRentvinePreview(row: ApartmentDetailRow) {
+    setRentvinePreviewLoadingId(row.id);
+    setRowStatus(row.id, { errorMessage: undefined });
+    try {
+      const res = await fetch(`/api/rentvine/apartment-details/${row.id}/preview-rentvine`);
+      const json: {
+        ok: boolean;
+        error?: string;
+        current?: { startDate: string | null; endDate: string | null };
+        next?: { startDate: string | null; endDate: string | null };
+      } = await res.json();
+      if (!json.ok || !json.current || !json.next) {
+        setRowStatus(row.id, {
+          rentvine: "error",
+          errorMessage: json.error || "Could not load Rentvine's current values for comparison.",
+        });
+        return;
+      }
+      setRentvinePreview({ row, current: json.current, next: json.next });
+    } catch (err) {
+      setRowStatus(row.id, {
+        rentvine: "error",
+        errorMessage: err instanceof Error ? err.message : "Unexpected error.",
+      });
+    } finally {
+      setRentvinePreviewLoadingId(null);
+    }
+  }
+
+  async function confirmRentvinePush() {
+    if (!rentvinePreview) return;
+    const row = rentvinePreview.row;
+    setRentvinePreview(null);
+    await saveToRentvine(row);
   }
 
   const MAX_PDF_UPLOAD_BYTES = 4 * 1024 * 1024; // 4MB, matches the server-side limit
@@ -1022,10 +1064,10 @@ export default function RentvineTab() {
                           <button
                             type="button"
                             className={styles.smallButton}
-                            onClick={() => saveToRentvine(row)}
-                            disabled={actionStatus?.rentvine === "saving"}
+                            onClick={() => openRentvinePreview(row)}
+                            disabled={actionStatus?.rentvine === "saving" || rentvinePreviewLoadingId === row.id}
                           >
-                            {actionStatus?.rentvine === "saving" ? (
+                            {actionStatus?.rentvine === "saving" || rentvinePreviewLoadingId === row.id ? (
                               <span className={styles.spinner} />
                             ) : actionStatus?.rentvine === "success" ? (
                               "✓ Rentvine"
@@ -1043,6 +1085,61 @@ export default function RentvineTab() {
                 })}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+      {rentvinePreview && (
+        <div className={styles.modalOverlay} onClick={() => setRentvinePreview(null)}>
+          <div className={styles.modalCard} onClick={(e) => e.stopPropagation()}>
+            <h2 className={styles.modalTitle}>Confirm push to Rentvine</h2>
+            <p className={styles.modalSubtitle}>
+              {rentvinePreview.row.address} {rentvinePreview.row.unit}
+            </p>
+            <table className={styles.modalTable}>
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>Rentvine currently has</th>
+                  <th>Will change to</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Start Date</td>
+                  <td>{formatDate(rentvinePreview.current.startDate)}</td>
+                  <td>
+                    {rentvinePreview.next.startDate
+                      ? formatDate(rentvinePreview.next.startDate)
+                      : "(unchanged)"}
+                  </td>
+                </tr>
+                <tr>
+                  <td>End Date</td>
+                  <td>{formatDate(rentvinePreview.current.endDate)}</td>
+                  <td>
+                    {rentvinePreview.next.endDate
+                      ? formatDate(rentvinePreview.next.endDate)
+                      : "(unchanged)"}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <div className={styles.modalActions}>
+              <button
+                type="button"
+                className={styles.smallButton}
+                onClick={() => setRentvinePreview(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className={styles.primaryButton}
+                onClick={confirmRentvinePush}
+              >
+                Confirm & Push
+              </button>
+            </div>
           </div>
         </div>
       )}

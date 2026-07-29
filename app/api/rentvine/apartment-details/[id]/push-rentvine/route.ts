@@ -27,13 +27,6 @@ export async function POST(
       );
     }
 
-    if (!row.activation_2 && !row.expiration_2) {
-      return NextResponse.json(
-        { ok: false, error: "Fill in Activation 2 and/or Expiration 2 before pushing to Rentvine." },
-        { status: 400 },
-      );
-    }
-
     // Prefer the documented, schema-verified lease endpoint (POST
     // /leases/{leaseID} per Rentvine's published OpenAPI spec) over the
     // undocumented /leases/renewals/{id} path, which doesn't appear in that

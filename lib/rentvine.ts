@@ -270,6 +270,40 @@ export async function fetchAllApartmentDetails(): Promise<ApartmentDetailRow[]> 
 // Rentvine renewal-date write (Phase 2 — "Save to Rentvine")
 // ---------------------------------------------------------------------------
 
+export interface RentvineLeaseSnapshot {
+  startDate: string | null;
+  endDate: string | null;
+}
+
+// Reads a lease's current Start/End Date straight from Rentvine, for
+// showing a before/after comparison before actually writing.
+export async function getRentvineLeaseSnapshot(leaseId: string): Promise<RentvineLeaseSnapshot> {
+  const accountCode = process.env.RENTVINE_ACC_CODE;
+  const apiKey = process.env.RENTVINE_ACC_KEY;
+  const apiSecret = process.env.RENTVINE_ACC_SECRET;
+
+  const missing = [
+    !accountCode && "RENTVINE_ACC_CODE",
+    !apiKey && "RENTVINE_ACC_KEY",
+    !apiSecret && "RENTVINE_ACC_SECRET",
+  ].filter(Boolean);
+
+  if (missing.length > 0) {
+    throw new Error(`Missing env vars: ${missing.join(", ")}`);
+  }
+
+  const auth = getBasicAuth(apiKey!, apiSecret!);
+  const baseUrl = `https://${normalizeHost(accountCode!)}/api/manager`;
+
+  const data = (await rentvineGet(baseUrl, `/leases/${leaseId}`, auth)) as Record<string, unknown>;
+  const lease = data?.lease as Record<string, unknown> | undefined;
+
+  return {
+    startDate: lease?.startDate ? String(lease.startDate) : null,
+    endDate: lease?.endDate ? String(lease.endDate) : null,
+  };
+}
+
 export async function updateRentvineLeaseRenewalDates(
   leaseRenewalId: string,
   dates: { startDate?: string; endDate?: string },
