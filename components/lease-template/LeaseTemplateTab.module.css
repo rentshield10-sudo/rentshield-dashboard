@@ -252,3 +252,57 @@
     letter-spacing: 0.03em;
     color: #6b7280;
 }
+
+/* ── Signing panel ───────────────────────────────────────────────────── */
+
+.signingPanel {
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 16px;
+    padding: 20px;
+    max-width: 480px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.signingPanelTitle {
+    margin: 0;
+    font-size: 15px;
+    color: #0f172a;
+}
+
+.signingForm {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.signingLinkResult {
+    font-size: 12px;
+    color: #374151;
+    word-break: break-all;
+}
+
+.signingTable {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    margin-top: 8px;
+}
+
+.signingTable th {
+    text-align: left;
+    padding: 6px 8px;
+    font-size: 10px;
+    font-weight: 700;
+    color: #6b7280;
+    text-transform: uppercase;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.signingTable td {
+    padding: 6px 8px;
+    border-bottom: 1px solid #f1f5f9;
+    color: #111827;
+}

@@ -12,6 +12,15 @@ type DragRect = { startX: number; startY: number; currentX: number; currentY: nu
 
 const MIN_DRAG_PX = 6;
 
+interface SigningRequestSummary {
+  id: number;
+  tenant_name: string | null;
+  tenant_email: string;
+  document_id: string;
+  status: string;
+  created_at: string;
+}
+
 export default function LeaseTemplateTab() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -35,6 +44,13 @@ export default function LeaseTemplateTab() {
   const [fillModalField, setFillModalField] = useState<FieldRow | null>(null);
   const [fillSuggestions, setFillSuggestions] = useState<Suggestion[]>([]);
   const [fillLoading, setFillLoading] = useState(false);
+
+  const [signingRequests, setSigningRequests] = useState<SigningRequestSummary[]>([]);
+  const [tenantName, setTenantName] = useState("");
+  const [tenantEmail, setTenantEmail] = useState("");
+  const [creatingSigningRequest, setCreatingSigningRequest] = useState(false);
+  const [signingLinkResult, setSigningLinkResult] = useState<string | null>(null);
+  const [signingError, setSigningError] = useState("");
 
   // ── Render the template PDF ──────────────────────────────────────────
   useEffect(() => {
@@ -231,6 +247,49 @@ export default function LeaseTemplateTab() {
     });
   }
 
+  // ── Signing requests: create + list + revoke ──────────────────────────
+  async function loadSigningRequests() {
+    const res = await fetch("/api/lease-signing/requests");
+    const json: { ok: boolean; requests?: SigningRequestSummary[] } = await res.json();
+    if (json.ok && json.requests) setSigningRequests(json.requests);
+  }
+
+  useEffect(() => {
+    if (mode === "fill") loadSigningRequests();
+  }, [mode]);
+
+  async function createSigningRequest() {
+    if (!draftId || !tenantEmail.trim()) return;
+    setCreatingSigningRequest(true);
+    setSigningError("");
+    setSigningLinkResult(null);
+    try {
+      const res = await fetch("/api/lease-signing/requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          draftId,
+          tenantName: tenantName.trim() || undefined,
+          tenantEmail: tenantEmail.trim(),
+        }),
+      });
+      const json: { ok: boolean; error?: string; signingUrl?: string } = await res.json();
+      if (!json.ok) {
+        setSigningError(json.error || "Could not create signing request.");
+        return;
+      }
+      setSigningLinkResult(json.signingUrl ?? null);
+      await loadSigningRequests();
+    } finally {
+      setCreatingSigningRequest(false);
+    }
+  }
+
+  async function revokeSigningRequest(id: number) {
+    await fetch(`/api/lease-signing/requests/${id}/revoke`, { method: "POST" });
+    await loadSigningRequests();
+  }
+
   return (
     <div className={styles.page}>
       <div className={styles.header}>
@@ -291,6 +350,74 @@ export default function LeaseTemplateTab() {
           />
         )}
       </div>
+
+      {mode === "fill" && (
+        <div className={styles.signingPanel}>
+          <h2 className={styles.signingPanelTitle}>Send for Signing</h2>
+          <div className={styles.signingForm}>
+            <input
+              className={styles.modalInput}
+              placeholder="Tenant name (optional)"
+              value={tenantName}
+              onChange={(e) => setTenantName(e.target.value)}
+            />
+            <input
+              className={styles.modalInput}
+              placeholder="Tenant email"
+              value={tenantEmail}
+              onChange={(e) => setTenantEmail(e.target.value)}
+            />
+            <button
+              type="button"
+              className={styles.primaryButton}
+              disabled={creatingSigningRequest || !tenantEmail.trim() || !draftId}
+              onClick={createSigningRequest}
+            >
+              {creatingSigningRequest ? "Creating…" : "Create Signing Link"}
+            </button>
+          </div>
+          {signingError && <p className={styles.errorBanner}>{signingError}</p>}
+          {signingLinkResult && (
+            <p className={styles.signingLinkResult}>
+              Link created: <code>{signingLinkResult}</code> — share this with the tenant (email
+              delivery isn&apos;t wired up yet).
+            </p>
+          )}
+
+          {signingRequests.length > 0 && (
+            <table className={styles.signingTable}>
+              <thead>
+                <tr>
+                  <th>Tenant</th>
+                  <th>Status</th>
+                  <th>Created</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {signingRequests.map((r) => (
+                  <tr key={r.id}>
+                    <td>{r.tenant_name || r.tenant_email}</td>
+                    <td>{r.status}</td>
+                    <td>{new Date(r.created_at).toLocaleString()}</td>
+                    <td>
+                      {!["completed", "revoked", "expired", "declined"].includes(r.status) && (
+                        <button
+                          type="button"
+                          className={styles.smallButton}
+                          onClick={() => revokeSigningRequest(r.id)}
+                        >
+                          Revoke
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
 
       {pendingNewField && (
         <FieldEditorModal
