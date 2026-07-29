@@ -29,25 +29,29 @@ export async function POST(
       );
     }
 
-    if (!row.activation_2 || !row.expiration_2) {
+    const hasAnyField = row.activation_2 || row.expiration_2 || row.current_rent !== null;
+    if (!hasAnyField) {
       return NextResponse.json(
-        { ok: false, error: "Both Activation 2 and Expiration 2 must be set before pushing to Rentvine." },
+        {
+          ok: false,
+          error: "Fill in at least one of Activation 2, Expiration 2, or Current Rent before pushing to Rentvine.",
+        },
         { status: 400 },
       );
     }
 
     if (row.rentvine_lease_renewal_id) {
       const rentvineResult = await updateRentvineLeaseRenewalDates(row.rentvine_lease_renewal_id, {
-        startDate: row.activation_2,
-        endDate: row.expiration_2,
+        startDate: row.activation_2 ?? undefined,
+        endDate: row.expiration_2 ?? undefined,
       });
       return NextResponse.json({ ok: true, target: "renewal", rentvineResponse: rentvineResult });
     }
 
     if (row.rentvine_lease_id) {
       const rentvineResult = await updateRentvineLeaseFields(row.rentvine_lease_id, {
-        startDate: row.activation_2,
-        endDate: row.expiration_2,
+        startDate: row.activation_2 ?? undefined,
+        endDate: row.expiration_2 ?? undefined,
         currentRent: row.current_rent ?? undefined,
       });
       return NextResponse.json({ ok: true, target: "lease", rentvineResponse: rentvineResult });

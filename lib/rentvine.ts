@@ -272,7 +272,7 @@ export async function fetchAllApartmentDetails(): Promise<ApartmentDetailRow[]> 
 
 export async function updateRentvineLeaseRenewalDates(
   leaseRenewalId: string,
-  dates: { startDate: string; endDate: string },
+  dates: { startDate?: string; endDate?: string },
 ): Promise<unknown> {
   const accountCode = process.env.RENTVINE_ACC_CODE;
   const apiKey = process.env.RENTVINE_ACC_KEY;
@@ -323,7 +323,7 @@ export async function updateRentvineLeaseRenewalDates(
 // lease itself instead of a renewal sub-object.
 export async function updateRentvineLeaseFields(
   leaseId: string,
-  fields: { startDate: string; endDate: string; currentRent?: number },
+  fields: { startDate?: string; endDate?: string; currentRent?: number },
 ): Promise<unknown> {
   const accountCode = process.env.RENTVINE_ACC_CODE;
   const apiKey = process.env.RENTVINE_ACC_KEY;
