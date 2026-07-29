@@ -12,6 +12,16 @@ export async function uploadFile(path: string, data: Buffer, contentType: string
   }
 }
 
+export async function downloadFile(path: string): Promise<Buffer> {
+  const { data, error } = await supabaseServer.storage.from(BUCKET).download(path);
+
+  if (error || !data) {
+    throw new Error(`Supabase Storage download failed for ${path}: ${error?.message || "no data returned"}`);
+  }
+
+  return Buffer.from(await data.arrayBuffer());
+}
+
 export async function getSignedDownloadUrl(path: string, expiresInSeconds: number): Promise<string> {
   const { data, error } = await supabaseServer.storage
     .from(BUCKET)
