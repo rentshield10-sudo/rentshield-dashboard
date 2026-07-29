@@ -79,6 +79,9 @@ type ChartSeries = {
 
 type ActiveView = "home" | "leads" | "human" | "booking" | "messages" | "rentvine";
 
+const ACTIVE_VIEW_STORAGE_KEY = "mc-active-view";
+const VALID_ACTIVE_VIEWS: ActiveView[] = ["home", "leads", "human", "booking", "messages", "rentvine"];
+
 const LIVE_APARTMENTS_STORAGE_KEY = "mission_control_live_apartments";
 
 const weekDays = [
@@ -1154,6 +1157,20 @@ function ApartmentAnalytics({
 
 export default function DashboardPage() {
   const [activeView, setActiveView] = useState<ActiveView>("home");
+
+  // Restore the last-active tab after a page refresh instead of always
+  // landing back on Home. Read client-side only (after hydration) to avoid
+  // an SSR/client markup mismatch on first render.
+  useEffect(() => {
+    const stored = window.localStorage.getItem(ACTIVE_VIEW_STORAGE_KEY);
+    if (stored && (VALID_ACTIVE_VIEWS as string[]).includes(stored)) {
+      setActiveView(stored as ActiveView);
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(ACTIVE_VIEW_STORAGE_KEY, activeView);
+  }, [activeView]);
 
   const [apartments, setApartments] = useState<DashboardApartment[]>([]);
   const [leads, setLeads] = useState<DashboardLead[]>([]);
