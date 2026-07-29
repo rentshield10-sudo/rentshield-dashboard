@@ -9,7 +9,10 @@ const nextConfig: NextConfig = {
   // trace) but crashes at runtime on Vercel with a 500 that never reaches
   // our own error handling.
   outputFileTracingIncludes: {
-    "/*": ["./node_modules/@napi-rs/**/*"],
+    "/*": [
+      "./node_modules/@napi-rs/**/*",
+      "./node_modules/pdfjs-dist/legacy/build/**/*",
+    ],
   },
 };
 
