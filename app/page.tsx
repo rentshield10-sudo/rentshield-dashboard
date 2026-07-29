@@ -20,6 +20,9 @@ const MessagesTab = dynamic(() => import("../components/messages/MessagesTab"), 
 const RentvineTab = dynamic(() => import("../components/rentvine/RentvineTab"), {
   loading: () => <div style={{ padding: 24 }}>Loading Rentvine…</div>,
 });
+const LeaseTemplateTab = dynamic(() => import("../components/lease-template/LeaseTemplateTab"), {
+  loading: () => <div style={{ padding: 24 }}>Loading Lease Template…</div>,
+});
 
 type DashboardApartment = {
   apt_address: string;
@@ -77,10 +80,18 @@ type ChartSeries = {
   values: Array<{ dateKey: string; value: number | null }>;
 };
 
-type ActiveView = "home" | "leads" | "human" | "booking" | "messages" | "rentvine";
+type ActiveView = "home" | "leads" | "human" | "booking" | "messages" | "rentvine" | "lease-template";
 
 const ACTIVE_VIEW_STORAGE_KEY = "mc-active-view";
-const VALID_ACTIVE_VIEWS: ActiveView[] = ["home", "leads", "human", "booking", "messages", "rentvine"];
+const VALID_ACTIVE_VIEWS: ActiveView[] = [
+  "home",
+  "leads",
+  "human",
+  "booking",
+  "messages",
+  "rentvine",
+  "lease-template",
+];
 
 const LIVE_APARTMENTS_STORAGE_KEY = "mission_control_live_apartments";
 
@@ -1340,6 +1351,11 @@ export default function DashboardPage() {
       view: "rentvine" as ActiveView,
       count: 0,
     },
+    {
+      label: "Lease Template",
+      view: "lease-template" as ActiveView,
+      count: 0,
+    },
   ];
 
   const dashboardTodayKey = useMemo(() => {
@@ -1898,6 +1914,7 @@ export default function DashboardPage() {
         {activeView === "messages" && <MessagesTab />}
 
         {activeView === "rentvine" && <RentvineTab />}
+        {activeView === "lease-template" && <LeaseTemplateTab />}
       </section>
     </main>
   );
