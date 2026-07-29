@@ -317,3 +317,52 @@ export async function updateRentvineLeaseRenewalDates(
 
   return json;
 }
+
+// Fallback for leases with no formal renewal record in Rentvine (e.g.
+// Month-to-Month leases): writes the same dates + rent directly onto the
+// lease itself instead of a renewal sub-object.
+export async function updateRentvineLeaseFields(
+  leaseId: string,
+  fields: { startDate: string; endDate: string; currentRent?: number },
+): Promise<unknown> {
+  const accountCode = process.env.RENTVINE_ACC_CODE;
+  const apiKey = process.env.RENTVINE_ACC_KEY;
+  const apiSecret = process.env.RENTVINE_ACC_SECRET;
+
+  const missing = [
+    !accountCode && "RENTVINE_ACC_CODE",
+    !apiKey && "RENTVINE_ACC_KEY",
+    !apiSecret && "RENTVINE_ACC_SECRET",
+  ].filter(Boolean);
+
+  if (missing.length > 0) {
+    throw new Error(`Missing env vars: ${missing.join(", ")}`);
+  }
+
+  const auth = getBasicAuth(apiKey!, apiSecret!);
+  const baseUrl = `https://${normalizeHost(accountCode!)}/api/manager`;
+
+  const res = await fetch(`${baseUrl}/leases/${leaseId}`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Basic ${auth}`,
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(fields),
+  });
+
+  const text = await res.text();
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    json = { raw: text };
+  }
+
+  if (!res.ok) {
+    throw new Error(`Rentvine PATCH /leases/${leaseId} → ${res.status} ${res.statusText}: ${text}`);
+  }
+
+  return json;
+}
