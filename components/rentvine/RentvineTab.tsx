@@ -997,7 +997,13 @@ export default function RentvineTab() {
                             onClick={() => saveToSupabase(row)}
                             disabled={actionStatus?.supabase === "saving"}
                           >
-                            {actionStatus?.supabase === "saving" ? "..." : "→ Supabase"}
+                            {actionStatus?.supabase === "saving" ? (
+                              <span className={styles.spinner} />
+                            ) : actionStatus?.supabase === "success" ? (
+                              "✓ Supabase"
+                            ) : (
+                              "→ Supabase"
+                            )}
                           </button>
                           <button
                             type="button"
@@ -1005,7 +1011,13 @@ export default function RentvineTab() {
                             onClick={() => saveToSheet(row)}
                             disabled={actionStatus?.sheet === "saving"}
                           >
-                            {actionStatus?.sheet === "saving" ? "..." : "→ Sheet"}
+                            {actionStatus?.sheet === "saving" ? (
+                              <span className={styles.spinner} />
+                            ) : actionStatus?.sheet === "success" ? (
+                              "✓ Sheet"
+                            ) : (
+                              "→ Sheet"
+                            )}
                           </button>
                           <button
                             type="button"
@@ -1013,7 +1025,13 @@ export default function RentvineTab() {
                             onClick={() => saveToRentvine(row)}
                             disabled={actionStatus?.rentvine === "saving"}
                           >
-                            {actionStatus?.rentvine === "saving" ? "..." : "→ Rentvine"}
+                            {actionStatus?.rentvine === "saving" ? (
+                              <span className={styles.spinner} />
+                            ) : actionStatus?.rentvine === "success" ? (
+                              "✓ Rentvine"
+                            ) : (
+                              "→ Rentvine"
+                            )}
                           </button>
                         </div>
                         {actionStatus?.errorMessage && (
