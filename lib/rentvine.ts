@@ -304,6 +304,123 @@ export async function getRentvineLeaseSnapshot(leaseId: string): Promise<Rentvin
   };
 }
 
+export interface RentvineRentCharge {
+  chargeId: string;
+  description: string;
+  accountName: string;
+  amount: string;
+}
+
+export type RentvineRentChargeLookup =
+  | { status: "found"; charge: RentvineRentCharge }
+  | { status: "not_found" }
+  | { status: "ambiguous"; candidates: RentvineRentCharge[] };
+
+// Rentvine has no simple "rent" field on a lease — it's a recurring charge.
+// The linked chart-of-accounts entry has an authoritative account.isRent
+// flag ("1"/"0"), confirmed against a live lease's real recurring-charges
+// response — that's the primary match. Free-text description/account-name
+// matching is only a fallback if isRent is ever absent. Either way, exactly
+// one match is required before allowing a write, since guessing wrong would
+// overwrite the wrong charge's amount (e.g. a pet fee) with a rent value.
+export async function findRentvineRentCharge(leaseId: string): Promise<RentvineRentChargeLookup> {
+  const accountCode = process.env.RENTVINE_ACC_CODE;
+  const apiKey = process.env.RENTVINE_ACC_KEY;
+  const apiSecret = process.env.RENTVINE_ACC_SECRET;
+
+  const missing = [
+    !accountCode && "RENTVINE_ACC_CODE",
+    !apiKey && "RENTVINE_ACC_KEY",
+    !apiSecret && "RENTVINE_ACC_SECRET",
+  ].filter(Boolean);
+
+  if (missing.length > 0) {
+    throw new Error(`Missing env vars: ${missing.join(", ")}`);
+  }
+
+  const auth = getBasicAuth(apiKey!, apiSecret!);
+  const baseUrl = `https://${normalizeHost(accountCode!)}/api/manager`;
+
+  const data = (await rentvineGet(
+    baseUrl,
+    `/leases/${leaseId}/recurring-charges`,
+    auth,
+  )) as unknown;
+
+  const items = Array.isArray(data) ? (data as Record<string, unknown>[]) : [];
+
+  const mapped = items.map((item) => {
+    const charge = item.recurringCharge as Record<string, unknown>;
+    const account = item.account as Record<string, unknown>;
+    return {
+      chargeId: String(charge?.leaseRecurringChargeID ?? ""),
+      description: String(charge?.description ?? ""),
+      accountName: String(account?.name ?? ""),
+      amount: String(charge?.amount ?? ""),
+      isRentAccount: String(account?.isRent ?? "") === "1",
+    };
+  });
+
+  const byFlag = mapped.filter((c) => c.isRentAccount);
+  const candidates = byFlag.length > 0
+    ? byFlag
+    : mapped.filter((c) => /rent/i.test(c.description) || /rent/i.test(c.accountName));
+
+  if (candidates.length === 0) return { status: "not_found" };
+  if (candidates.length > 1) return { status: "ambiguous", candidates };
+  const { chargeId, description, accountName, amount } = candidates[0];
+  return { status: "found", charge: { chargeId, description, accountName, amount } };
+}
+
+export async function updateRentvineRecurringCharge(
+  leaseId: string,
+  chargeId: string,
+  fields: { amount: number },
+): Promise<unknown> {
+  const accountCode = process.env.RENTVINE_ACC_CODE;
+  const apiKey = process.env.RENTVINE_ACC_KEY;
+  const apiSecret = process.env.RENTVINE_ACC_SECRET;
+
+  const missing = [
+    !accountCode && "RENTVINE_ACC_CODE",
+    !apiKey && "RENTVINE_ACC_KEY",
+    !apiSecret && "RENTVINE_ACC_SECRET",
+  ].filter(Boolean);
+
+  if (missing.length > 0) {
+    throw new Error(`Missing env vars: ${missing.join(", ")}`);
+  }
+
+  const auth = getBasicAuth(apiKey!, apiSecret!);
+  const baseUrl = `https://${normalizeHost(accountCode!)}/api/manager`;
+
+  const res = await fetch(`${baseUrl}/leases/${leaseId}/recurring-charges/${chargeId}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${auth}`,
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ amount: fields.amount }),
+  });
+
+  const text = await res.text();
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    json = { raw: text };
+  }
+
+  if (!res.ok) {
+    throw new Error(
+      `Rentvine POST /leases/${leaseId}/recurring-charges/${chargeId} → ${res.status} ${res.statusText}: ${text}`,
+    );
+  }
+
+  return json;
+}
+
 export async function updateRentvineLeaseRenewalDates(
   leaseRenewalId: string,
   dates: { startDate?: string; endDate?: string },

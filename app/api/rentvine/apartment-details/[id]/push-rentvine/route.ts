@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase-server";
-import { updateRentvineLeaseRenewalDates, updateRentvineLeaseFields } from "@/lib/rentvine";
+import {
+  updateRentvineLeaseFields,
+  findRentvineRentCharge,
+  updateRentvineRecurringCharge,
+} from "@/lib/rentvine";
 
 async function getParams(context: { params: Promise<{ id: string }> | { id: string } }) {
   return await context.params;
@@ -15,7 +19,7 @@ export async function POST(
 
     const { data: row, error: fetchError } = await supabaseServer
       .from("apartment_lease_details")
-      .select("address, unit, activation_2, expiration_2, rentvine_lease_id, rentvine_lease_renewal_id")
+      .select("address, unit, activation_1, expiration_1, current_rent, rentvine_lease_id")
       .eq("id", id)
       .single();
 
@@ -27,33 +31,43 @@ export async function POST(
       );
     }
 
-    // Prefer the documented, schema-verified lease endpoint (POST
-    // /leases/{leaseID} per Rentvine's published OpenAPI spec) over the
-    // undocumented /leases/renewals/{id} path, which doesn't appear in that
-    // spec at all and has no confirmed write support.
-    if (row.rentvine_lease_id) {
-      const rentvineResult = await updateRentvineLeaseFields(row.rentvine_lease_id, {
-        startDate: row.activation_2 ?? undefined,
-        endDate: row.expiration_2 ?? undefined,
-      });
-      return NextResponse.json({ ok: true, target: "lease", rentvineResponse: rentvineResult });
+    if (!row.rentvine_lease_id) {
+      return NextResponse.json(
+        { ok: false, error: "No Rentvine lease is linked to this row — cannot push." },
+        { status: 400 },
+      );
     }
 
-    if (row.rentvine_lease_renewal_id) {
-      const rentvineResult = await updateRentvineLeaseRenewalDates(row.rentvine_lease_renewal_id, {
-        startDate: row.activation_2 ?? undefined,
-        endDate: row.expiration_2 ?? undefined,
-      });
-      return NextResponse.json({ ok: true, target: "renewal", rentvineResponse: rentvineResult });
+    const leaseResult = await updateRentvineLeaseFields(row.rentvine_lease_id, {
+      startDate: row.activation_1 ?? undefined,
+      endDate: row.expiration_1 ?? undefined,
+    });
+
+    let rentResult: unknown = null;
+    let rentWarning: string | undefined;
+
+    if (row.current_rent !== null) {
+      const rentLookup = await findRentvineRentCharge(row.rentvine_lease_id);
+      if (rentLookup.status === "found") {
+        rentResult = await updateRentvineRecurringCharge(row.rentvine_lease_id, rentLookup.charge.chargeId, {
+          amount: row.current_rent,
+        });
+      } else if (rentLookup.status === "not_found") {
+        rentWarning = "No recurring charge matching 'rent' was found on this lease — rent was not pushed.";
+      } else {
+        rentWarning = `Multiple charges matched 'rent' (${rentLookup.candidates
+          .map((c) => c.description)
+          .join(", ")}) — rent was not pushed to avoid updating the wrong one.`;
+      }
     }
 
-    return NextResponse.json(
-      {
-        ok: false,
-        error: "No Rentvine lease or renewal record is linked to this row — cannot push.",
-      },
-      { status: 400 },
-    );
+    return NextResponse.json({
+      ok: true,
+      target: "lease",
+      rentvineResponse: leaseResult,
+      rentResponse: rentResult,
+      rentWarning,
+    });
   } catch (error) {
     const err = error as { message?: string; code?: string; details?: string; hint?: string };
     return NextResponse.json(

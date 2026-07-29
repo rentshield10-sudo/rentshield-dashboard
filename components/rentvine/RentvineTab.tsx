@@ -178,8 +178,9 @@ export default function RentvineTab() {
   const [rentvinePreviewLoadingId, setRentvinePreviewLoadingId] = useState<number | null>(null);
   const [rentvinePreview, setRentvinePreview] = useState<{
     row: ApartmentDetailRow;
-    current: { startDate: string | null; endDate: string | null };
-    next: { startDate: string | null; endDate: string | null };
+    current: { startDate: string | null; endDate: string | null; rent: string | null };
+    next: { startDate: string | null; endDate: string | null; rent: string | null };
+    rentLookupStatus: "found" | "not_found" | "ambiguous";
   } | null>(null);
 
   const APARTMENT_COLUMN_LABELS = [
@@ -481,17 +482,23 @@ export default function RentvineTab() {
       const json: {
         ok: boolean;
         error?: string;
-        current?: { startDate: string | null; endDate: string | null };
-        next?: { startDate: string | null; endDate: string | null };
+        current?: { startDate: string | null; endDate: string | null; rent: string | null };
+        next?: { startDate: string | null; endDate: string | null; rent: string | null };
+        rentLookupStatus?: "found" | "not_found" | "ambiguous";
       } = await res.json();
-      if (!json.ok || !json.current || !json.next) {
+      if (!json.ok || !json.current || !json.next || !json.rentLookupStatus) {
         setRowStatus(row.id, {
           rentvine: "error",
           errorMessage: json.error || "Could not load Rentvine's current values for comparison.",
         });
         return;
       }
-      setRentvinePreview({ row, current: json.current, next: json.next });
+      setRentvinePreview({
+        row,
+        current: json.current,
+        next: json.next,
+        rentLookupStatus: json.rentLookupStatus,
+      });
     } catch (err) {
       setRowStatus(row.id, {
         rentvine: "error",
@@ -1122,8 +1129,31 @@ export default function RentvineTab() {
                       : "(unchanged)"}
                   </td>
                 </tr>
+                <tr>
+                  <td>Rent</td>
+                  <td>{formatCurrency(rentvinePreview.current.rent)}</td>
+                  <td>
+                    {rentvinePreview.rentLookupStatus !== "found"
+                      ? "(not pushed — see note below)"
+                      : rentvinePreview.next.rent
+                        ? formatCurrency(rentvinePreview.next.rent)
+                        : "(unchanged)"}
+                  </td>
+                </tr>
               </tbody>
             </table>
+            {rentvinePreview.rentLookupStatus === "not_found" && (
+              <p className={styles.modalWarning}>
+                No recurring charge matching &quot;rent&quot; was found on this lease — rent will
+                not be pushed, only the dates.
+              </p>
+            )}
+            {rentvinePreview.rentLookupStatus === "ambiguous" && (
+              <p className={styles.modalWarning}>
+                Multiple charges on this lease look like rent — rent will not be pushed
+                automatically to avoid updating the wrong one.
+              </p>
+            )}
             <div className={styles.modalActions}>
               <button
                 type="button"
