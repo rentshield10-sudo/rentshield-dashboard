@@ -15,9 +15,7 @@ export async function POST(
 
     const { data: row, error: fetchError } = await supabaseServer
       .from("apartment_lease_details")
-      .select(
-        "address, unit, activation_2, expiration_2, current_rent, rentvine_lease_id, rentvine_lease_renewal_id",
-      )
+      .select("address, unit, activation_2, expiration_2, rentvine_lease_id, rentvine_lease_renewal_id")
       .eq("id", id)
       .single();
 
@@ -29,15 +27,23 @@ export async function POST(
       );
     }
 
-    const hasAnyField = row.activation_2 || row.expiration_2 || row.current_rent !== null;
-    if (!hasAnyField) {
+    if (!row.activation_2 && !row.expiration_2) {
       return NextResponse.json(
-        {
-          ok: false,
-          error: "Fill in at least one of Activation 2, Expiration 2, or Current Rent before pushing to Rentvine.",
-        },
+        { ok: false, error: "Fill in Activation 2 and/or Expiration 2 before pushing to Rentvine." },
         { status: 400 },
       );
+    }
+
+    // Prefer the documented, schema-verified lease endpoint (POST
+    // /leases/{leaseID} per Rentvine's published OpenAPI spec) over the
+    // undocumented /leases/renewals/{id} path, which doesn't appear in that
+    // spec at all and has no confirmed write support.
+    if (row.rentvine_lease_id) {
+      const rentvineResult = await updateRentvineLeaseFields(row.rentvine_lease_id, {
+        startDate: row.activation_2 ?? undefined,
+        endDate: row.expiration_2 ?? undefined,
+      });
+      return NextResponse.json({ ok: true, target: "lease", rentvineResponse: rentvineResult });
     }
 
     if (row.rentvine_lease_renewal_id) {
@@ -46,15 +52,6 @@ export async function POST(
         endDate: row.expiration_2 ?? undefined,
       });
       return NextResponse.json({ ok: true, target: "renewal", rentvineResponse: rentvineResult });
-    }
-
-    if (row.rentvine_lease_id) {
-      const rentvineResult = await updateRentvineLeaseFields(row.rentvine_lease_id, {
-        startDate: row.activation_2 ?? undefined,
-        endDate: row.expiration_2 ?? undefined,
-        currentRent: row.current_rent ?? undefined,
-      });
-      return NextResponse.json({ ok: true, target: "lease", rentvineResponse: rentvineResult });
     }
 
     return NextResponse.json(

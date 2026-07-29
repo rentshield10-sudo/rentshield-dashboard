@@ -319,11 +319,17 @@ export async function updateRentvineLeaseRenewalDates(
 }
 
 // Fallback for leases with no formal renewal record in Rentvine (e.g.
-// Month-to-Month leases): writes the same dates + rent directly onto the
-// lease itself instead of a renewal sub-object.
+// Month-to-Month leases): writes the dates directly onto the lease itself.
+//
+// Per Rentvine's published OpenAPI spec (docs.rentvine.com), "Update Lease"
+// is POST /leases/{leaseID} — there is no PATCH/PUT on this resource at all,
+// which is why earlier PATCH attempts returned 404 (confirmed: OPTIONS on
+// the same URL also 404s, meaning the method itself isn't routed). The
+// documented request schema for this endpoint has no rent field, so rent
+// isn't sent here — it's a separate resource we don't currently write to.
 export async function updateRentvineLeaseFields(
   leaseId: string,
-  fields: { startDate?: string; endDate?: string; currentRent?: number },
+  fields: { startDate?: string; endDate?: string },
 ): Promise<unknown> {
   const accountCode = process.env.RENTVINE_ACC_CODE;
   const apiKey = process.env.RENTVINE_ACC_KEY;
@@ -343,7 +349,7 @@ export async function updateRentvineLeaseFields(
   const baseUrl = `https://${normalizeHost(accountCode!)}/api/manager`;
 
   const res = await fetch(`${baseUrl}/leases/${leaseId}`, {
-    method: "PATCH",
+    method: "POST",
     headers: {
       Authorization: `Basic ${auth}`,
       Accept: "application/json",
@@ -361,7 +367,7 @@ export async function updateRentvineLeaseFields(
   }
 
   if (!res.ok) {
-    throw new Error(`Rentvine PATCH /leases/${leaseId} → ${res.status} ${res.statusText}: ${text}`);
+    throw new Error(`Rentvine POST /leases/${leaseId} → ${res.status} ${res.statusText}: ${text}`);
   }
 
   return json;
