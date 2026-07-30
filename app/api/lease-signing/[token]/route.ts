@@ -3,6 +3,7 @@ import { supabaseServer } from "@/lib/supabase-server";
 import { getSignedDownloadUrl } from "@/lib/storage";
 import { findSigningRequestByToken, isExpired } from "@/lib/signing";
 import { logAuditEvent, getRequestMeta } from "@/lib/audit";
+import { safeErrorResponse } from "@/lib/errors";
 
 async function getParams(context: { params: Promise<{ token: string }> | { token: string } }) {
   return await context.params;
@@ -83,7 +84,6 @@ export async function GET(
       consentedAt: signingRequest.consented_at,
     });
   } catch (error) {
-    const err = error as { message?: string };
-    return NextResponse.json({ ok: false, error: err?.message || String(error) }, { status: 500 });
+    return NextResponse.json({ ok: false, ...safeErrorResponse(error, "lease-signing/[token] GET") }, { status: 500 });
   }
 }

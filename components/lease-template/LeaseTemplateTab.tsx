@@ -293,6 +293,16 @@ export default function LeaseTemplateTab() {
     await loadSigningRequests();
   }
 
+  async function downloadCompletedPdf(id: number) {
+    const res = await fetch(`/api/lease-signing/requests/${id}/completed-pdf`);
+    const json: { ok: boolean; url?: string; error?: string } = await res.json();
+    if (json.ok && json.url) {
+      window.open(json.url, "_blank", "noopener,noreferrer");
+    } else {
+      alert(json.error || "Could not load the completed document.");
+    }
+  }
+
   return (
     <div className={styles.page}>
       <div className={styles.header}>
@@ -406,6 +416,15 @@ export default function LeaseTemplateTab() {
                     <td>{r.status}</td>
                     <td>{new Date(r.created_at).toLocaleString()}</td>
                     <td>
+                      {r.status === "completed" && (
+                        <button
+                          type="button"
+                          className={styles.smallButton}
+                          onClick={() => downloadCompletedPdf(r.id)}
+                        >
+                          Download
+                        </button>
+                      )}
                       {!["completed", "revoked", "expired", "declined"].includes(r.status) && (
                         <button
                           type="button"

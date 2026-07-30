@@ -7,6 +7,7 @@ import { findSigningRequestByToken, isExpired } from "@/lib/signing";
 import { logAuditEvent, getRequestMeta } from "@/lib/audit";
 import { isRateLimited } from "@/lib/rate-limit";
 import { sendEmail } from "@/lib/email";
+import { safeErrorResponse } from "@/lib/errors";
 
 const CONSENT_TEXT_1 =
   "I consent to use electronic records and electronic signatures for this renewal agreement.";
@@ -236,7 +237,6 @@ export async function POST(
 
     return NextResponse.json({ ok: true, documentId: signingRequest.document_id, completedPdfUrl });
   } catch (error) {
-    const err = error as { message?: string };
-    return NextResponse.json({ ok: false, error: err?.message || String(error) }, { status: 500 });
+    return NextResponse.json({ ok: false, ...safeErrorResponse(error, "sign") }, { status: 500 });
   }
 }

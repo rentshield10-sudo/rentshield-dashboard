@@ -4,6 +4,7 @@ import { findSigningRequestByToken, isExpired } from "@/lib/signing";
 import { sha256Hex, timingSafeEqualHex } from "@/lib/crypto-utils";
 import { logAuditEvent, getRequestMeta } from "@/lib/audit";
 import { isRateLimited } from "@/lib/rate-limit";
+import { safeErrorResponse } from "@/lib/errors";
 
 const MAX_FAILED_ATTEMPTS = 5;
 
@@ -103,7 +104,6 @@ export async function POST(
 
     return NextResponse.json({ ok: true });
   } catch (error) {
-    const err = error as { message?: string };
-    return NextResponse.json({ ok: false, error: err?.message || String(error) }, { status: 500 });
+    return NextResponse.json({ ok: false, ...safeErrorResponse(error, "verify-code") }, { status: 500 });
   }
 }

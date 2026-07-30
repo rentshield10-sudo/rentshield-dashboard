@@ -5,6 +5,7 @@ import { generateOtpCode, sha256Hex } from "@/lib/crypto-utils";
 import { logAuditEvent, getRequestMeta } from "@/lib/audit";
 import { isRateLimited } from "@/lib/rate-limit";
 import { sendEmail } from "@/lib/email";
+import { safeErrorResponse } from "@/lib/errors";
 
 const CODE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const RESEND_COOLDOWN_MS = 60 * 1000; // 1 minute between resend requests
@@ -95,7 +96,6 @@ export async function POST(
       ...(isDev && !emailSent ? { devOnlyCode: code } : {}),
     });
   } catch (error) {
-    const err = error as { message?: string };
-    return NextResponse.json({ ok: false, error: err?.message || String(error) }, { status: 500 });
+    return NextResponse.json({ ok: false, ...safeErrorResponse(error, "send-code") }, { status: 500 });
   }
 }
