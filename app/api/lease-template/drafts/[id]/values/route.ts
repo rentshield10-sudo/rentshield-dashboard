@@ -12,8 +12,8 @@ export async function GET(
   try {
     const { id } = await getParams(context);
     const { data, error } = await supabaseServer
-      .from("lease_template_filled_values")
-      .select("field_id, value")
+      .from("lease_template_draft_values")
+      .select("variable_name, value")
       .eq("draft_id", id);
 
     if (error) throw error;
@@ -32,16 +32,16 @@ export async function PATCH(
   try {
     const { id } = await getParams(context);
     const body = await request.json();
-    const fieldId = Number(body?.fieldId);
+    const variableName = String(body?.variableName ?? "").trim();
     const value = String(body?.value ?? "");
 
-    if (!Number.isFinite(fieldId)) {
-      return NextResponse.json({ ok: false, error: "fieldId must be a number." }, { status: 400 });
+    if (!variableName) {
+      return NextResponse.json({ ok: false, error: "variableName is required." }, { status: 400 });
     }
 
-    const { error } = await supabaseServer.from("lease_template_filled_values").upsert(
-      { draft_id: Number(id), field_id: fieldId, value, updated_at: new Date().toISOString() },
-      { onConflict: "draft_id,field_id" },
+    const { error } = await supabaseServer.from("lease_template_draft_values").upsert(
+      { draft_id: Number(id), variable_name: variableName, value, updated_at: new Date().toISOString() },
+      { onConflict: "draft_id,variable_name" },
     );
 
     if (error) throw error;

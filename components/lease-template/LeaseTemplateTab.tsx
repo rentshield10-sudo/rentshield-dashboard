@@ -1,16 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import styles from "./LeaseTemplateTab.module.css";
-import FieldBox, { type FieldRow } from "./FieldBox";
-import FieldEditorModal, { type FieldType } from "./FieldEditorModal";
-import FillValueModal, { type Suggestion } from "./FillValueModal";
+import { extractVariableNames, substituteVariables } from "@/lib/template-vars";
 
-type Mode = "design" | "fill";
-
-type DragRect = { startX: number; startY: number; currentX: number; currentY: number };
-
-const MIN_DRAG_PX = 6;
+interface Template {
+  id: number | null;
+  name: string;
+  body: string;
+}
 
 interface SigningRequestSummary {
   id: number;
@@ -22,28 +20,15 @@ interface SigningRequestSummary {
 }
 
 export default function LeaseTemplateTab() {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const [error, setError] = useState("");
-  const [pageSize, setPageSize] = useState<{ width: number; height: number } | null>(null);
-  const [mode, setMode] = useState<Mode>("design");
-
-  const [fields, setFields] = useState<FieldRow[]>([]);
-  const [dragRect, setDragRect] = useState<DragRect | null>(null);
-  const [editingField, setEditingField] = useState<FieldRow | null>(null);
-  const [pendingNewField, setPendingNewField] = useState<{
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-  } | null>(null);
+  const [template, setTemplate] = useState<Template | null>(null);
+  const [loadError, setLoadError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveMessage, setSaveMessage] = useState("");
 
   const [draftId, setDraftId] = useState<number | null>(null);
-  const [filledValues, setFilledValues] = useState<Record<number, string>>({});
-  const [fillModalField, setFillModalField] = useState<FieldRow | null>(null);
-  const [fillSuggestions, setFillSuggestions] = useState<Suggestion[]>([]);
-  const [fillLoading, setFillLoading] = useState(false);
+  const [variableValues, setVariableValues] = useState<Record<string, string>>({});
 
   const [signingRequests, setSigningRequests] = useState<SigningRequestSummary[]>([]);
   const [tenantName, setTenantName] = useState("");
@@ -53,56 +38,22 @@ export default function LeaseTemplateTab() {
   const [signingLinkEmailSent, setSigningLinkEmailSent] = useState(false);
   const [signingError, setSigningError] = useState("");
 
-  // ── Render the template PDF ──────────────────────────────────────────
+  // ── Load the template ─────────────────────────────────────────────────
   useEffect(() => {
-    let cancelled = false;
-
-    async function render() {
-      try {
-        const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-        pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
-
-        const doc = await pdfjs.getDocument("/lease-template.pdf").promise;
-        const page = await doc.getPage(1);
-        const viewport = page.getViewport({ scale: 1.5 });
-
-        const canvas = canvasRef.current;
-        if (!canvas || cancelled) return;
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return;
-
-        await page.render({ canvasContext: ctx, viewport, canvas }).promise;
-        if (!cancelled) setPageSize({ width: viewport.width, height: viewport.height });
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Could not load the lease template PDF.");
-        }
-      }
-    }
-
-    render();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // ── Load existing field definitions ──────────────────────────────────
-  useEffect(() => {
-    fetch("/api/lease-template/fields")
+    fetch("/api/lease-template/template")
       .then((res) => res.json())
-      .then((json: { ok: boolean; fields?: FieldRow[] }) => {
-        if (json.ok && json.fields) setFields(json.fields);
+      .then((json: { ok: boolean; error?: string; template?: Template }) => {
+        if (!json.ok || !json.template) {
+          setLoadError(json.error || "Could not load the lease template.");
+          return;
+        }
+        setTemplate(json.template);
       })
-      .catch(() => {
-        /* field list is non-critical to page load; leave empty on failure */
-      });
+      .catch((err) => setLoadError(err instanceof Error ? err.message : "Unexpected error."));
   }, []);
 
-  // ── Create a draft + load its filled values once entering Fill mode ──
+  // ── Create a draft + load its variable values, once ─────────────────
   useEffect(() => {
-    if (mode !== "fill" || draftId !== null) return;
     fetch("/api/lease-template/drafts", { method: "POST", body: "{}" })
       .then((res) => res.json())
       .then((json: { ok: boolean; draft?: { id: number } }) => {
@@ -113,151 +64,89 @@ export default function LeaseTemplateTab() {
         return null;
       })
       .then((res) => res?.json())
-      .then((json: { ok: boolean; values?: { field_id: number; value: string }[] } | undefined) => {
+      .then((json: { ok: boolean; values?: { variable_name: string; value: string }[] } | undefined) => {
         if (json?.ok && json.values) {
-          const map: Record<number, string> = {};
-          for (const v of json.values) map[v.field_id] = v.value;
-          setFilledValues(map);
+          const map: Record<string, string> = {};
+          for (const v of json.values) map[v.variable_name] = v.value;
+          setVariableValues(map);
         }
       })
       .catch(() => {
-        /* fill mode still usable without persisted values loaded */
+        /* variable filling still usable without persisted values loaded */
       });
-  }, [mode, draftId]);
+  }, []);
 
-  // ── Design mode: drag-to-create ──────────────────────────────────────
-  function handleMouseDown(e: React.MouseEvent) {
-    if (mode !== "design") return;
-    if (e.target !== canvasRef.current && e.target !== containerRef.current) return;
-
-    const rect = containerRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const startX = e.clientX - rect.left;
-    const startY = e.clientY - rect.top;
-    setDragRect({ startX, startY, currentX: startX, currentY: startY });
-  }
-
-  function handleMouseMove(e: React.MouseEvent) {
-    if (!dragRect) return;
-    const rect = containerRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    setDragRect({
-      ...dragRect,
-      currentX: e.clientX - rect.left,
-      currentY: e.clientY - rect.top,
-    });
-  }
-
-  function handleMouseUp() {
-    if (!dragRect || !pageSize) {
-      setDragRect(null);
-      return;
-    }
-    const left = Math.min(dragRect.startX, dragRect.currentX);
-    const top = Math.min(dragRect.startY, dragRect.currentY);
-    const width = Math.abs(dragRect.currentX - dragRect.startX);
-    const height = Math.abs(dragRect.currentY - dragRect.startY);
-    setDragRect(null);
-
-    if (width < MIN_DRAG_PX || height < MIN_DRAG_PX) return;
-
-    setPendingNewField({
-      x: (left / pageSize.width) * 100,
-      y: (top / pageSize.height) * 100,
-      width: (width / pageSize.width) * 100,
-      height: (height / pageSize.height) * 100,
-    });
-  }
-
-  async function saveNewField(label: string, fieldType: FieldType) {
-    if (!pendingNewField) return;
-    try {
-      const res = await fetch("/api/lease-template/fields", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...pendingNewField, pageNumber: 1, label, fieldType }),
+  function loadSigningRequests() {
+    fetch("/api/lease-signing/requests")
+      .then((res) => res.json())
+      .then((json: { ok: boolean; requests?: SigningRequestSummary[] }) => {
+        if (json.ok && json.requests) setSigningRequests(json.requests);
       });
-      const json: { ok: boolean; field?: FieldRow } = await res.json();
-      if (json.ok && json.field) {
-        setFields((prev) => [...prev, json.field as FieldRow]);
-      }
-    } finally {
-      setPendingNewField(null);
-    }
-  }
-
-  async function saveEditedField(label: string, fieldType: FieldType) {
-    if (!editingField) return;
-    const id = editingField.id;
-    try {
-      const res = await fetch(`/api/lease-template/fields/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ label, fieldType }),
-      });
-      const json: { ok: boolean; field?: FieldRow } = await res.json();
-      if (json.ok && json.field) {
-        setFields((prev) => prev.map((f) => (f.id === id ? (json.field as FieldRow) : f)));
-      }
-    } finally {
-      setEditingField(null);
-    }
-  }
-
-  async function deleteField(id: number) {
-    setFields((prev) => prev.filter((f) => f.id !== id));
-    setEditingField(null);
-    await fetch(`/api/lease-template/fields/${id}`, { method: "DELETE" });
-  }
-
-  // ── Fill mode: click a box, show suggestions, save a value ───────────
-  async function openFillModal(field: FieldRow) {
-    setFillModalField(field);
-    setFillLoading(true);
-    setFillSuggestions([]);
-    try {
-      const res = await fetch(
-        `/api/lease-template/fill-suggestions?label=${encodeURIComponent(field.label)}`,
-      );
-      const json: { ok: boolean; suggestions?: Suggestion[] } = await res.json();
-      if (json.ok && json.suggestions) setFillSuggestions(json.suggestions);
-    } finally {
-      setFillLoading(false);
-    }
-  }
-
-  async function selectFillValue(value: string) {
-    const field = fillModalField;
-    setFillModalField(null);
-    if (!field || !value.trim()) return;
-
-    setFilledValues((prev) => ({ ...prev, [field.id]: value }));
-
-    if (draftId !== null) {
-      await fetch(`/api/lease-template/drafts/${draftId}/values`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fieldId: field.id, value }),
-      });
-    }
-
-    await fetch("/api/lease-template/remembered-values", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ label: field.label, value }),
-    });
-  }
-
-  // ── Signing requests: create + list + revoke ──────────────────────────
-  async function loadSigningRequests() {
-    const res = await fetch("/api/lease-signing/requests");
-    const json: { ok: boolean; requests?: SigningRequestSummary[] } = await res.json();
-    if (json.ok && json.requests) setSigningRequests(json.requests);
   }
 
   useEffect(() => {
-    if (mode === "fill") loadSigningRequests();
-  }, [mode]);
+    loadSigningRequests();
+  }, []);
+
+  const variableNames = useMemo(
+    () => (template ? extractVariableNames(template.body) : []),
+    [template],
+  );
+
+  const previewText = useMemo(
+    () => (template ? substituteVariables(template.body, variableValues) : ""),
+    [template, variableValues],
+  );
+
+  function insertVariable(name: string) {
+    if (!template) return;
+    const textarea = textareaRef.current;
+    const token = `{{${name}}}`;
+    if (!textarea) {
+      setTemplate({ ...template, body: template.body + token });
+      return;
+    }
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const newBody = template.body.slice(0, start) + token + template.body.slice(end);
+    setTemplate({ ...template, body: newBody });
+    requestAnimationFrame(() => {
+      textarea.focus();
+      textarea.setSelectionRange(start + token.length, start + token.length);
+    });
+  }
+
+  async function saveTemplate() {
+    if (!template) return;
+    setSaving(true);
+    setSaveMessage("");
+    try {
+      const res = await fetch("/api/lease-template/template", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: template.id, name: template.name, body: template.body }),
+      });
+      const json: { ok: boolean; error?: string; template?: Template } = await res.json();
+      if (!json.ok || !json.template) {
+        setSaveMessage(json.error || "Could not save template.");
+        return;
+      }
+      setTemplate(json.template);
+      setSaveMessage("Saved.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function setVariableValue(name: string, value: string) {
+    setVariableValues((prev) => ({ ...prev, [name]: value }));
+    if (draftId === null) return;
+    await fetch(`/api/lease-template/drafts/${draftId}/values`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ variableName: name, value }),
+    });
+  }
 
   async function createSigningRequest() {
     if (!draftId || !tenantEmail.trim()) return;
@@ -282,7 +171,7 @@ export default function LeaseTemplateTab() {
       }
       setSigningLinkResult(json.signingUrl ?? null);
       setSigningLinkEmailSent(!!json.emailSent);
-      await loadSigningRequests();
+      loadSigningRequests();
     } finally {
       setCreatingSigningRequest(false);
     }
@@ -290,7 +179,7 @@ export default function LeaseTemplateTab() {
 
   async function revokeSigningRequest(id: number) {
     await fetch(`/api/lease-signing/requests/${id}/revoke`, { method: "POST" });
-    await loadSigningRequests();
+    loadSigningRequests();
   }
 
   async function downloadCompletedPdf(id: number) {
@@ -303,175 +192,162 @@ export default function LeaseTemplateTab() {
     }
   }
 
+  if (loadError) {
+    return (
+      <div className={styles.page}>
+        <div className={styles.errorBanner}>{loadError}</div>
+      </div>
+    );
+  }
+
+  if (!template) {
+    return <div className={styles.page}>Loading…</div>;
+  }
+
   return (
     <div className={styles.page}>
       <div className={styles.header}>
         <h1>Lease Template</h1>
-        <div className={styles.modeToggle}>
-          <button
-            type="button"
-            className={mode === "design" ? styles.primaryButton : styles.smallButton}
-            onClick={() => setMode("design")}
-          >
-            Design
-          </button>
-          <button
-            type="button"
-            className={mode === "fill" ? styles.primaryButton : styles.smallButton}
-            onClick={() => setMode("fill")}
-          >
-            Fill
-          </button>
+      </div>
+
+      <div className={styles.editorLayout}>
+        <div className={styles.editorPane}>
+          <input
+            className={styles.templateNameInput}
+            value={template.name}
+            onChange={(e) => setTemplate({ ...template, name: e.target.value })}
+          />
+
+          <div className={styles.variablePills}>
+            {["tenantName", "address", "city", "state", "leaseStart", "leaseEnd", "rentAmount"].map(
+              (name) => (
+                <button
+                  key={name}
+                  type="button"
+                  className={styles.variablePill}
+                  onClick={() => insertVariable(name)}
+                >
+                  {`{{${name}}}`}
+                </button>
+              ),
+            )}
+          </div>
+
+          <textarea
+            ref={textareaRef}
+            className={styles.templateTextarea}
+            value={template.body}
+            onChange={(e) => setTemplate({ ...template, body: e.target.value })}
+            rows={20}
+          />
+
+          <div className={styles.editorActions}>
+            <button type="button" className={styles.primaryButton} onClick={saveTemplate} disabled={saving}>
+              {saving ? "Saving…" : "Save Template"}
+            </button>
+            {saveMessage && <span className={styles.saveMessage}>{saveMessage}</span>}
+          </div>
+        </div>
+
+        <div className={styles.previewPane}>
+          <h2 className={styles.sectionTitle}>Live Preview</h2>
+          <div className={styles.previewBox}>{previewText}</div>
+
+          <h2 className={styles.sectionTitle}>Variables</h2>
+          <div className={styles.variableForm}>
+            {variableNames.length === 0 && (
+              <p className={styles.muted}>No {"{{variables}}"} found in the template yet.</p>
+            )}
+            {variableNames.map((name) => (
+              <div key={name} className={styles.variableRow}>
+                <label className={styles.variableLabel}>{name}</label>
+                <input
+                  className={styles.modalInput}
+                  value={variableValues[name] ?? ""}
+                  onChange={(e) => setVariableValue(name, e.target.value)}
+                />
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 
-      {error && <div className={styles.errorBanner}>{error}</div>}
-
-      <div
-        className={styles.pageContainer}
-        ref={containerRef}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-      >
-        <canvas ref={canvasRef} className={styles.canvas} />
-
-        {fields
-          .filter((f) => f.page_number === 1)
-          .map((field) => (
-            <FieldBox
-              key={field.id}
-              field={field}
-              mode={mode}
-              value={filledValues[field.id]}
-              onClick={() =>
-                mode === "design" ? setEditingField(field) : openFillModal(field)
-              }
-              onDelete={mode === "design" ? () => deleteField(field.id) : undefined}
-            />
-          ))}
-
-        {dragRect && (
-          <div
-            className={styles.dragRect}
-            style={{
-              left: Math.min(dragRect.startX, dragRect.currentX),
-              top: Math.min(dragRect.startY, dragRect.currentY),
-              width: Math.abs(dragRect.currentX - dragRect.startX),
-              height: Math.abs(dragRect.currentY - dragRect.startY),
-            }}
+      <div className={styles.signingPanel}>
+        <h2 className={styles.signingPanelTitle}>Send for Signing</h2>
+        <div className={styles.signingForm}>
+          <input
+            className={styles.modalInput}
+            placeholder="Tenant name (optional)"
+            value={tenantName}
+            onChange={(e) => setTenantName(e.target.value)}
           />
+          <input
+            className={styles.modalInput}
+            placeholder="Tenant email"
+            value={tenantEmail}
+            onChange={(e) => setTenantEmail(e.target.value)}
+          />
+          <button
+            type="button"
+            className={styles.primaryButton}
+            disabled={creatingSigningRequest || !tenantEmail.trim() || !draftId}
+            onClick={createSigningRequest}
+          >
+            {creatingSigningRequest ? "Creating…" : "Create Signing Link"}
+          </button>
+        </div>
+        {signingError && <p className={styles.errorBanner}>{signingError}</p>}
+        {signingLinkResult && (
+          <p className={styles.signingLinkResult}>
+            Link created: <code>{signingLinkResult}</code>
+            {signingLinkEmailSent
+              ? " — emailed to the tenant."
+              : " — could not email the tenant; share this link manually for now."}
+          </p>
+        )}
+
+        {signingRequests.length > 0 && (
+          <table className={styles.signingTable}>
+            <thead>
+              <tr>
+                <th>Tenant</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {signingRequests.map((r) => (
+                <tr key={r.id}>
+                  <td>{r.tenant_name || r.tenant_email}</td>
+                  <td>{r.status}</td>
+                  <td>{new Date(r.created_at).toLocaleString()}</td>
+                  <td>
+                    {r.status === "completed" && (
+                      <button
+                        type="button"
+                        className={styles.smallButton}
+                        onClick={() => downloadCompletedPdf(r.id)}
+                      >
+                        Download
+                      </button>
+                    )}
+                    {!["completed", "revoked", "expired", "declined"].includes(r.status) && (
+                      <button
+                        type="button"
+                        className={styles.smallButton}
+                        onClick={() => revokeSigningRequest(r.id)}
+                      >
+                        Revoke
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </div>
-
-      {mode === "fill" && (
-        <div className={styles.signingPanel}>
-          <h2 className={styles.signingPanelTitle}>Send for Signing</h2>
-          <div className={styles.signingForm}>
-            <input
-              className={styles.modalInput}
-              placeholder="Tenant name (optional)"
-              value={tenantName}
-              onChange={(e) => setTenantName(e.target.value)}
-            />
-            <input
-              className={styles.modalInput}
-              placeholder="Tenant email"
-              value={tenantEmail}
-              onChange={(e) => setTenantEmail(e.target.value)}
-            />
-            <button
-              type="button"
-              className={styles.primaryButton}
-              disabled={creatingSigningRequest || !tenantEmail.trim() || !draftId}
-              onClick={createSigningRequest}
-            >
-              {creatingSigningRequest ? "Creating…" : "Create Signing Link"}
-            </button>
-          </div>
-          {signingError && <p className={styles.errorBanner}>{signingError}</p>}
-          {signingLinkResult && (
-            <p className={styles.signingLinkResult}>
-              Link created: <code>{signingLinkResult}</code>
-              {signingLinkEmailSent
-                ? " — emailed to the tenant."
-                : " — could not email the tenant (check the domain is verified in Resend); share this link manually for now."}
-            </p>
-          )}
-
-          {signingRequests.length > 0 && (
-            <table className={styles.signingTable}>
-              <thead>
-                <tr>
-                  <th>Tenant</th>
-                  <th>Status</th>
-                  <th>Created</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {signingRequests.map((r) => (
-                  <tr key={r.id}>
-                    <td>{r.tenant_name || r.tenant_email}</td>
-                    <td>{r.status}</td>
-                    <td>{new Date(r.created_at).toLocaleString()}</td>
-                    <td>
-                      {r.status === "completed" && (
-                        <button
-                          type="button"
-                          className={styles.smallButton}
-                          onClick={() => downloadCompletedPdf(r.id)}
-                        >
-                          Download
-                        </button>
-                      )}
-                      {!["completed", "revoked", "expired", "declined"].includes(r.status) && (
-                        <button
-                          type="button"
-                          className={styles.smallButton}
-                          onClick={() => revokeSigningRequest(r.id)}
-                        >
-                          Revoke
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      )}
-
-      {pendingNewField && (
-        <FieldEditorModal
-          initialLabel=""
-          initialFieldType="text"
-          onSave={saveNewField}
-          onCancel={() => setPendingNewField(null)}
-        />
-      )}
-
-      {editingField && (
-        <FieldEditorModal
-          initialLabel={editingField.label}
-          initialFieldType={editingField.field_type}
-          onSave={saveEditedField}
-          onCancel={() => setEditingField(null)}
-          onDelete={() => deleteField(editingField.id)}
-        />
-      )}
-
-      {fillModalField && (
-        <FillValueModal
-          field={fillModalField}
-          currentValue={filledValues[fillModalField.id] ?? ""}
-          suggestions={fillSuggestions}
-          loading={fillLoading}
-          onSelect={selectFillValue}
-          onCancel={() => setFillModalField(null)}
-        />
-      )}
     </div>
   );
 }

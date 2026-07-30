@@ -1,54 +1,52 @@
-import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
-import fs from "fs";
-import path from "path";
+import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 
-export interface DraftField {
-  id: number;
-  page_number: number;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  label: string;
-  field_type: "text" | "date" | "signature";
+const PAGE_WIDTH = 612; // US Letter, points
+const PAGE_HEIGHT = 792;
+const MARGIN = 50;
+const FONT_SIZE = 11;
+const LINE_HEIGHT = 15;
+
+function wrapLine(text: string, font: PDFFont, size: number, maxWidth: number): string[] {
+  if (text === "") return [""];
+  const words = text.split(" ");
+  const lines: string[] = [];
+  let current = "";
+
+  for (const word of words) {
+    const candidate = current ? `${current} ${word}` : word;
+    if (font.widthOfTextAtSize(candidate, size) > maxWidth && current) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current) lines.push(current);
+  return lines;
 }
 
-// Draws each field's filled value onto the template PDF at its stored
-// position. Field x/y/width/height are percentages of page dimensions with
-// a top-left origin (matching the browser overlay in the Lease Template
-// Editor); PDF coordinates have a bottom-left origin, so y is flipped here.
-export async function generateFilledPdf(
-  fields: DraftField[],
-  values: Record<number, string>,
-): Promise<Uint8Array> {
-  const templatePath = path.join(process.cwd(), "public", "lease-template.pdf");
-  const templateBytes = fs.readFileSync(templatePath);
-
-  const pdfDoc = await PDFDocument.load(templateBytes);
+// Renders plain text (with {{variables}} already substituted) as a fresh
+// multi-page PDF -- replaces the earlier approach of drawing values onto a
+// scanned template image, now that the template itself is plain text.
+export async function renderTemplatePdf(text: string): Promise<Uint8Array> {
+  const pdfDoc = await PDFDocument.create();
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const pages = pdfDoc.getPages();
+  const maxWidth = PAGE_WIDTH - MARGIN * 2;
 
-  for (const field of fields) {
-    const value = values[field.id];
-    if (!value) continue;
+  let page: PDFPage = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+  let y = PAGE_HEIGHT - MARGIN;
 
-    const page = pages[field.page_number - 1];
-    if (!page) continue;
-
-    const { width: pageWidth, height: pageHeight } = page.getSize();
-    const boxX = (field.x / 100) * pageWidth;
-    const boxHeightPt = (field.height / 100) * pageHeight;
-    const boxY = pageHeight - (field.y / 100) * pageHeight - boxHeightPt;
-
-    const fontSize = Math.max(8, Math.min(14, boxHeightPt * 0.6));
-
-    page.drawText(value, {
-      x: boxX + 2,
-      y: boxY + boxHeightPt * 0.25,
-      size: fontSize,
-      font,
-      color: rgb(0.07, 0.09, 0.15),
-    });
+  const paragraphs = text.split("\n");
+  for (const paragraph of paragraphs) {
+    const wrapped = wrapLine(paragraph, font, FONT_SIZE, maxWidth);
+    for (const line of wrapped) {
+      if (y < MARGIN) {
+        page = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+        y = PAGE_HEIGHT - MARGIN;
+      }
+      page.drawText(line, { x: MARGIN, y, size: FONT_SIZE, font, color: rgb(0.07, 0.09, 0.15) });
+      y -= LINE_HEIGHT;
+    }
   }
 
   return pdfDoc.save();

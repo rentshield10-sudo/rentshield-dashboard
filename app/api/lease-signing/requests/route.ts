@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { supabaseServer } from "@/lib/supabase-server";
 import { uploadFile } from "@/lib/storage";
-import { generateFilledPdf, type DraftField } from "@/lib/pdf-generation";
+import { renderTemplatePdf } from "@/lib/pdf-generation";
+import { substituteVariables } from "@/lib/template-vars";
 import { sha256Hex, generateToken } from "@/lib/crypto-utils";
 import { logAuditEvent, getRequestMeta } from "@/lib/audit";
 import { sendEmail } from "@/lib/email";
@@ -42,23 +43,30 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: false, error: "A valid tenantEmail is required." }, { status: 400 });
     }
 
-    const { data: fields, error: fieldsError } = await supabaseServer
-      .from("lease_template_fields")
-      .select("id, page_number, x, y, width, height, label, field_type");
-    if (fieldsError) throw fieldsError;
+    const { data: template, error: templateError } = await supabaseServer
+      .from("lease_templates")
+      .select("body")
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (templateError) throw templateError;
+    if (!template?.body) {
+      return NextResponse.json({ ok: false, error: "No lease template has been saved yet." }, { status: 400 });
+    }
 
-    const { data: filledValues, error: valuesError } = await supabaseServer
-      .from("lease_template_filled_values")
-      .select("field_id, value")
+    const { data: draftValues, error: valuesError } = await supabaseServer
+      .from("lease_template_draft_values")
+      .select("variable_name, value")
       .eq("draft_id", draftId);
     if (valuesError) throw valuesError;
 
-    const valuesMap: Record<number, string> = {};
-    for (const row of filledValues ?? []) {
-      valuesMap[row.field_id] = row.value;
+    const valuesMap: Record<string, string> = {};
+    for (const row of draftValues ?? []) {
+      valuesMap[row.variable_name] = row.value;
     }
 
-    const pdfBytes = await generateFilledPdf((fields ?? []) as DraftField[], valuesMap);
+    const filledText = substituteVariables(template.body, valuesMap);
+    const pdfBytes = await renderTemplatePdf(filledText);
     const pdfBuffer = Buffer.from(pdfBytes);
     const originalPdfHash = sha256Hex(pdfBuffer);
 
