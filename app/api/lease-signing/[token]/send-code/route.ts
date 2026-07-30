@@ -4,6 +4,7 @@ import { findSigningRequestByToken, isExpired } from "@/lib/signing";
 import { generateOtpCode, sha256Hex } from "@/lib/crypto-utils";
 import { logAuditEvent, getRequestMeta } from "@/lib/audit";
 import { isRateLimited } from "@/lib/rate-limit";
+import { sendEmail } from "@/lib/email";
 
 const CODE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const RESEND_COOLDOWN_MS = 60 * 1000; // 1 minute between resend requests
@@ -70,15 +71,28 @@ export async function POST(
       userAgent,
     });
 
-    // Email delivery is not wired up yet (deferred). For local testing only,
-    // the code is returned directly here instead of being emailed — this
-    // MUST be removed/gated before any real deployment, since it defeats
-    // the whole point of email-based verification.
     const isDev = process.env.NODE_ENV !== "production";
+    let emailSent = false;
+
+    try {
+      await sendEmail({
+        to: signingRequest.tenant_email,
+        subject: "Your verification code",
+        html: `<p>Your verification code is: <b style="font-size:20px;">${code}</b></p><p>This code expires in 10 minutes.</p>`,
+      });
+      emailSent = true;
+    } catch (emailError) {
+      // In sandbox mode (no verified domain), Resend rejects sends to
+      // arbitrary tenant addresses -- fall back to returning the code
+      // directly, but ONLY in dev, so local testing keeps working.
+      console.error("Failed to send verification code email:", emailError);
+      if (!isDev) throw emailError;
+    }
 
     return NextResponse.json({
       ok: true,
-      ...(isDev ? { devOnlyCode: code } : {}),
+      emailSent,
+      ...(isDev && !emailSent ? { devOnlyCode: code } : {}),
     });
   } catch (error) {
     const err = error as { message?: string };

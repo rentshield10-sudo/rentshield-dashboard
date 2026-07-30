@@ -5,6 +5,7 @@ import { uploadFile } from "@/lib/storage";
 import { generateFilledPdf, type DraftField } from "@/lib/pdf-generation";
 import { sha256Hex, generateToken } from "@/lib/crypto-utils";
 import { logAuditEvent, getRequestMeta } from "@/lib/audit";
+import { sendEmail } from "@/lib/email";
 
 const DEFAULT_EXPIRY_DAYS = 7;
 
@@ -97,11 +98,42 @@ export async function POST(request: Request) {
       userAgent,
     });
 
+    const signingUrl = `/sign-renewal/${rawToken}`;
+    const absoluteSigningUrl = `${new URL(request.url).origin}${signingUrl}`;
+
+    let emailSent = false;
+    try {
+      await sendEmail({
+        to: tenantEmail,
+        subject: "Your lease renewal agreement is ready to sign",
+        html: `
+          <p>Hi ${tenantName || "there"},</p>
+          <p>Your lease renewal agreement is ready for your review and signature.</p>
+          <p><a href="${absoluteSigningUrl}">Click here to review and sign</a></p>
+          <p>This link expires on ${new Date(signingRequest.expires_at).toLocaleDateString()}.</p>
+        `,
+      });
+      emailSent = true;
+      await logAuditEvent({
+        signingRequestId: signingRequest.id,
+        documentId,
+        eventType: "signing_email_sent",
+        ipAddress,
+        userAgent,
+      });
+    } catch (emailError) {
+      // Don't fail the whole request over email delivery -- staff can
+      // still share the link manually (the response includes it either
+      // way), and this is visible to them via emailSent: false.
+      console.error("Failed to send signing invite email:", emailError);
+    }
+
     return NextResponse.json({
       ok: true,
-      signingUrl: `/sign-renewal/${rawToken}`,
+      signingUrl,
       documentId,
       expiresAt: signingRequest.expires_at,
+      emailSent,
     });
   } catch (error) {
     const err = error as { message?: string };

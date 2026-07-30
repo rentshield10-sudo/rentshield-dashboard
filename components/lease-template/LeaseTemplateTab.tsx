@@ -50,6 +50,7 @@ export default function LeaseTemplateTab() {
   const [tenantEmail, setTenantEmail] = useState("");
   const [creatingSigningRequest, setCreatingSigningRequest] = useState(false);
   const [signingLinkResult, setSigningLinkResult] = useState<string | null>(null);
+  const [signingLinkEmailSent, setSigningLinkEmailSent] = useState(false);
   const [signingError, setSigningError] = useState("");
 
   // ── Render the template PDF ──────────────────────────────────────────
@@ -273,12 +274,14 @@ export default function LeaseTemplateTab() {
           tenantEmail: tenantEmail.trim(),
         }),
       });
-      const json: { ok: boolean; error?: string; signingUrl?: string } = await res.json();
+      const json: { ok: boolean; error?: string; signingUrl?: string; emailSent?: boolean } =
+        await res.json();
       if (!json.ok) {
         setSigningError(json.error || "Could not create signing request.");
         return;
       }
       setSigningLinkResult(json.signingUrl ?? null);
+      setSigningLinkEmailSent(!!json.emailSent);
       await loadSigningRequests();
     } finally {
       setCreatingSigningRequest(false);
@@ -379,8 +382,10 @@ export default function LeaseTemplateTab() {
           {signingError && <p className={styles.errorBanner}>{signingError}</p>}
           {signingLinkResult && (
             <p className={styles.signingLinkResult}>
-              Link created: <code>{signingLinkResult}</code> — share this with the tenant (email
-              delivery isn&apos;t wired up yet).
+              Link created: <code>{signingLinkResult}</code>
+              {signingLinkEmailSent
+                ? " — emailed to the tenant."
+                : " — could not email the tenant (check the domain is verified in Resend); share this link manually for now."}
             </p>
           )}
 

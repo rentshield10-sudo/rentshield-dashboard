@@ -6,6 +6,7 @@ import { sha256Hex } from "@/lib/crypto-utils";
 import { findSigningRequestByToken, isExpired } from "@/lib/signing";
 import { logAuditEvent, getRequestMeta } from "@/lib/audit";
 import { isRateLimited } from "@/lib/rate-limit";
+import { sendEmail } from "@/lib/email";
 
 const CONSENT_TEXT_1 =
   "I consent to use electronic records and electronic signatures for this renewal agreement.";
@@ -206,6 +207,32 @@ export async function POST(
     });
 
     const completedPdfUrl = await getSignedDownloadUrl(completedPdfPath, 3600);
+
+    // Email a longer-lived secure link to the completed document (not an
+    // attachment, per spec — this system uses secure links). Failure here
+    // doesn't fail the sign operation itself; the tenant already has the
+    // confirmation page's own download link.
+    try {
+      const emailUrl = await getSignedDownloadUrl(completedPdfPath, 7 * 24 * 60 * 60);
+      await sendEmail({
+        to: signingRequest.tenant_email,
+        subject: "Your signed lease renewal agreement",
+        html: `
+          <p>Your lease renewal agreement has been signed and completed.</p>
+          <p><a href="${emailUrl}">Download your completed agreement</a></p>
+          <p>Document ID: ${signingRequest.document_id}</p>
+        `,
+      });
+      await logAuditEvent({
+        signingRequestId: signingRequest.id,
+        documentId: signingRequest.document_id,
+        eventType: "completed_pdf_emailed",
+        ipAddress,
+        userAgent,
+      });
+    } catch (emailError) {
+      console.error("Failed to send completed PDF email:", emailError);
+    }
 
     return NextResponse.json({ ok: true, documentId: signingRequest.document_id, completedPdfUrl });
   } catch (error) {

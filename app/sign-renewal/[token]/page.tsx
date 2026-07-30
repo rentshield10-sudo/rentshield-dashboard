@@ -31,6 +31,7 @@ export default function SignRenewalPage({ params }: { params: Promise<{ token: s
   const [otpError, setOtpError] = useState("");
   const [otpBusy, setOtpBusy] = useState(false);
   const [devOnlyCode, setDevOnlyCode] = useState("");
+  const [otpEmailSent, setOtpEmailSent] = useState(false);
   const [verified, setVerified] = useState(false);
 
   const [consent1, setConsent1] = useState(false);
@@ -64,12 +65,13 @@ export default function SignRenewalPage({ params }: { params: Promise<{ token: s
     setDevOnlyCode("");
     try {
       const res = await fetch(`/api/lease-signing/${token}/send-code`, { method: "POST" });
-      const json: { ok: boolean; error?: string; devOnlyCode?: string } = await res.json();
+      const json: { ok: boolean; error?: string; devOnlyCode?: string; emailSent?: boolean } = await res.json();
       if (!json.ok) {
         setOtpError(json.error || "Could not send code.");
         return;
       }
       setOtpSent(true);
+      setOtpEmailSent(!!json.emailSent);
       if (json.devOnlyCode) setDevOnlyCode(json.devOnlyCode);
     } catch (err) {
       setOtpError(err instanceof Error ? err.message : "Unexpected error.");
@@ -192,9 +194,10 @@ export default function SignRenewalPage({ params }: { params: Promise<{ token: s
               </button>
             ) : (
               <>
+                {otpEmailSent && <p className={styles.successText}>✓ Code sent to {status.tenantEmail}</p>}
                 {devOnlyCode && (
                   <p className={styles.devNote}>
-                    Dev-only: email sending isn't wired up yet, so here's the code directly: <b>{devOnlyCode}</b>
+                    Dev-only: couldn&apos;t email the code (sandbox mode?), so here it is directly: <b>{devOnlyCode}</b>
                   </p>
                 )}
                 <input
