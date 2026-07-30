@@ -10,14 +10,33 @@ interface Template {
   body: string;
 }
 
+interface ParticipantSummary {
+  id: number;
+  role: string;
+  name: string | null;
+  email: string;
+  status: string;
+}
+
 interface SigningRequestSummary {
   id: number;
-  tenant_name: string | null;
-  tenant_email: string;
   document_id: string;
   status: string;
   created_at: string;
+  participants: ParticipantSummary[];
 }
+
+interface ParticipantFormRow {
+  role: string;
+  name: string;
+  email: string;
+}
+
+const DEFAULT_PARTICIPANT_ROWS: ParticipantFormRow[] = [
+  { role: "Landlord", name: "", email: "" },
+  { role: "Tenant", name: "", email: "" },
+  { role: "Witness - Property Management", name: "", email: "" },
+];
 
 export default function LeaseTemplateTab() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -31,11 +50,11 @@ export default function LeaseTemplateTab() {
   const [variableValues, setVariableValues] = useState<Record<string, string>>({});
 
   const [signingRequests, setSigningRequests] = useState<SigningRequestSummary[]>([]);
-  const [tenantName, setTenantName] = useState("");
-  const [tenantEmail, setTenantEmail] = useState("");
+  const [participantRows, setParticipantRows] = useState<ParticipantFormRow[]>(DEFAULT_PARTICIPANT_ROWS);
   const [creatingSigningRequest, setCreatingSigningRequest] = useState(false);
-  const [signingLinkResult, setSigningLinkResult] = useState<string | null>(null);
-  const [signingLinkEmailSent, setSigningLinkEmailSent] = useState(false);
+  const [signingResult, setSigningResult] = useState<
+    { role: string; email: string; signingUrl: string; emailSent: boolean }[] | null
+  >(null);
   const [signingError, setSigningError] = useState("");
 
   // ── Load the template ─────────────────────────────────────────────────
@@ -148,29 +167,47 @@ export default function LeaseTemplateTab() {
     });
   }
 
+  function updateParticipantRow(index: number, patch: Partial<ParticipantFormRow>) {
+    setParticipantRows((prev) => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+  }
+
+  function addParticipantRow() {
+    setParticipantRows((prev) => [...prev, { role: "", name: "", email: "" }]);
+  }
+
+  function removeParticipantRow(index: number) {
+    setParticipantRows((prev) => prev.filter((_, i) => i !== index));
+  }
+
   async function createSigningRequest() {
-    if (!draftId || !tenantEmail.trim()) return;
+    const validRows = participantRows.filter((r) => r.role.trim() && r.email.trim());
+    if (!draftId || validRows.length === 0) return;
     setCreatingSigningRequest(true);
     setSigningError("");
-    setSigningLinkResult(null);
+    setSigningResult(null);
     try {
       const res = await fetch("/api/lease-signing/requests", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           draftId,
-          tenantName: tenantName.trim() || undefined,
-          tenantEmail: tenantEmail.trim(),
+          participants: validRows.map((r) => ({
+            role: r.role.trim(),
+            name: r.name.trim() || undefined,
+            email: r.email.trim(),
+          })),
         }),
       });
-      const json: { ok: boolean; error?: string; signingUrl?: string; emailSent?: boolean } =
-        await res.json();
+      const json: {
+        ok: boolean;
+        error?: string;
+        participants?: { role: string; email: string; signingUrl: string; emailSent: boolean }[];
+      } = await res.json();
       if (!json.ok) {
         setSigningError(json.error || "Could not create signing request.");
         return;
       }
-      setSigningLinkResult(json.signingUrl ?? null);
-      setSigningLinkEmailSent(!!json.emailSent);
+      setSigningResult(json.participants ?? []);
       loadSigningRequests();
     } finally {
       setCreatingSigningRequest(false);
@@ -274,44 +311,72 @@ export default function LeaseTemplateTab() {
 
       <div className={styles.signingPanel}>
         <h2 className={styles.signingPanelTitle}>Send for Signing</h2>
+        <div className={styles.participantRows}>
+          {participantRows.map((row, i) => (
+            <div key={i} className={styles.participantRow}>
+              <input
+                className={styles.modalInput}
+                placeholder="Role (e.g. Landlord)"
+                value={row.role}
+                onChange={(e) => updateParticipantRow(i, { role: e.target.value })}
+              />
+              <input
+                className={styles.modalInput}
+                placeholder="Name (optional)"
+                value={row.name}
+                onChange={(e) => updateParticipantRow(i, { name: e.target.value })}
+              />
+              <input
+                className={styles.modalInput}
+                placeholder="Email"
+                value={row.email}
+                onChange={(e) => updateParticipantRow(i, { email: e.target.value })}
+              />
+              <button
+                type="button"
+                className={styles.smallButton}
+                onClick={() => removeParticipantRow(i)}
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+        </div>
         <div className={styles.signingForm}>
-          <input
-            className={styles.modalInput}
-            placeholder="Tenant name (optional)"
-            value={tenantName}
-            onChange={(e) => setTenantName(e.target.value)}
-          />
-          <input
-            className={styles.modalInput}
-            placeholder="Tenant email"
-            value={tenantEmail}
-            onChange={(e) => setTenantEmail(e.target.value)}
-          />
+          <button type="button" className={styles.smallButton} onClick={addParticipantRow}>
+            + Add Participant
+          </button>
           <button
             type="button"
             className={styles.primaryButton}
-            disabled={creatingSigningRequest || !tenantEmail.trim() || !draftId}
+            disabled={
+              creatingSigningRequest ||
+              !draftId ||
+              participantRows.filter((r) => r.role.trim() && r.email.trim()).length === 0
+            }
             onClick={createSigningRequest}
           >
-            {creatingSigningRequest ? "Creating…" : "Create Signing Link"}
+            {creatingSigningRequest ? "Creating…" : "Create Signing Envelope"}
           </button>
         </div>
         {signingError && <p className={styles.errorBanner}>{signingError}</p>}
-        {signingLinkResult && (
-          <p className={styles.signingLinkResult}>
-            Link created: <code>{signingLinkResult}</code>
-            {signingLinkEmailSent
-              ? " — emailed to the tenant."
-              : " — could not email the tenant; share this link manually for now."}
-          </p>
+        {signingResult && (
+          <div className={styles.signingLinkResult}>
+            {signingResult.map((p, i) => (
+              <p key={i}>
+                <b>{p.role}</b> ({p.email}): <code>{p.signingUrl}</code>
+                {p.emailSent ? " — emailed." : " — could not email; share manually."}
+              </p>
+            ))}
+          </div>
         )}
 
         {signingRequests.length > 0 && (
           <table className={styles.signingTable}>
             <thead>
               <tr>
-                <th>Tenant</th>
-                <th>Status</th>
+                <th>Document</th>
+                <th>Participants</th>
                 <th>Created</th>
                 <th></th>
               </tr>
@@ -319,8 +384,14 @@ export default function LeaseTemplateTab() {
             <tbody>
               {signingRequests.map((r) => (
                 <tr key={r.id}>
-                  <td>{r.tenant_name || r.tenant_email}</td>
-                  <td>{r.status}</td>
+                  <td>{r.document_id.slice(0, 8)}… ({r.status})</td>
+                  <td>
+                    {r.participants.map((p) => (
+                      <div key={p.id}>
+                        {p.role}: {p.name || p.email} — {p.status}
+                      </div>
+                    ))}
+                  </td>
                   <td>{new Date(r.created_at).toLocaleString()}</td>
                   <td>
                     {r.status === "completed" && (

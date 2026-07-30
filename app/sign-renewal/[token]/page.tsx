@@ -6,13 +6,17 @@ import SignatureCanvas from "../../../components/lease-signing/SignatureCanvas";
 
 type Status = {
   documentId: string;
-  tenantName: string | null;
-  tenantEmail: string;
+  role: string;
+  name: string | null;
+  email: string;
   status: string;
   originalPdfUrl: string | null;
   expiresAt: string | null;
   verifiedAt: string | null;
   consentedAt: string | null;
+  waitingOnOthers: boolean;
+  envelopeCompleted: boolean;
+  completedPdfUrl: string | null;
 };
 
 const CONSENT_TEXT_1 =
@@ -44,6 +48,7 @@ export default function SignRenewalPage({ params }: { params: Promise<{ token: s
   const [signBusy, setSignBusy] = useState(false);
   const [signError, setSignError] = useState("");
   const [completedPdfUrl, setCompletedPdfUrl] = useState<string | null>(null);
+  const [waitingForOthers, setWaitingForOthers] = useState(false);
 
   useEffect(() => {
     fetch(`/api/lease-signing/${token}`)
@@ -55,6 +60,13 @@ export default function SignRenewalPage({ params }: { params: Promise<{ token: s
         }
         setStatus(json as Status);
         setVerified(!!json.verifiedAt);
+        if (json.status === "signed") {
+          if (json.envelopeCompleted) {
+            setCompletedPdfUrl(json.completedPdfUrl ?? null);
+          } else {
+            setWaitingForOthers(true);
+          }
+        }
       })
       .catch((err) => setLoadError(err instanceof Error ? err.message : "Unexpected error."));
   }, [token]);
@@ -123,12 +135,17 @@ export default function SignRenewalPage({ params }: { params: Promise<{ token: s
           signatureDataUrl: signatureMode === "drawn" ? signatureDataUrl : undefined,
         }),
       });
-      const json: { ok: boolean; error?: string; completedPdfUrl?: string } = await res.json();
+      const json: { ok: boolean; error?: string; completedPdfUrl?: string; waitingOnOthers?: boolean } =
+        await res.json();
       if (!json.ok) {
         setSignError(json.error || "Could not complete signing.");
         return;
       }
-      setCompletedPdfUrl(json.completedPdfUrl ?? null);
+      if (json.waitingOnOthers) {
+        setWaitingForOthers(true);
+      } else {
+        setCompletedPdfUrl(json.completedPdfUrl ?? null);
+      }
     } catch (err) {
       setSignError(err instanceof Error ? err.message : "Unexpected error.");
     } finally {
@@ -153,11 +170,27 @@ export default function SignRenewalPage({ params }: { params: Promise<{ token: s
       <div className={styles.page}>
         <div className={styles.card}>
           <h1 className={styles.title}>Signed successfully</h1>
-          <p>Thank you — your renewal agreement has been signed and completed.</p>
+          <p>Thank you — the renewal agreement has been signed by everyone and is now complete.</p>
           <p>Document ID: {status.documentId}</p>
           <a className={styles.primaryButton} href={completedPdfUrl} target="_blank" rel="noreferrer">
             Download completed agreement
           </a>
+        </div>
+      </div>
+    );
+  }
+
+  if (waitingForOthers) {
+    return (
+      <div className={styles.page}>
+        <div className={styles.card}>
+          <h1 className={styles.title}>Thanks — you&apos;re signed</h1>
+          <p>
+            Your signature as <b>{status.role}</b> has been recorded. This agreement will be complete once
+            the other party/parties have also signed — you&apos;ll receive an email with the final document
+            once everyone has.
+          </p>
+          <p>Document ID: {status.documentId}</p>
         </div>
       </div>
     );
@@ -168,7 +201,7 @@ export default function SignRenewalPage({ params }: { params: Promise<{ token: s
       <div className={styles.card}>
         <h1 className={styles.title}>Lease Renewal Agreement</h1>
         <p className={styles.meta}>
-          Tenant: {status.tenantName || status.tenantEmail} · Document ID: {status.documentId}
+          Signing as {status.role}: {status.name || status.email} · Document ID: {status.documentId}
         </p>
 
         {status.originalPdfUrl && (
@@ -187,14 +220,14 @@ export default function SignRenewalPage({ params }: { params: Promise<{ token: s
           <p className={styles.successText}>✓ Email verified</p>
         ) : (
           <>
-            <p>We'll send a one-time code to {status.tenantEmail}.</p>
+            <p>We'll send a one-time code to {status.email}.</p>
             {!otpSent ? (
               <button type="button" className={styles.primaryButton} onClick={sendCode} disabled={otpBusy}>
                 {otpBusy ? "Sending…" : "Send code"}
               </button>
             ) : (
               <>
-                {otpEmailSent && <p className={styles.successText}>✓ Code sent to {status.tenantEmail}</p>}
+                {otpEmailSent && <p className={styles.successText}>✓ Code sent to {status.email}</p>}
                 {devOnlyCode && (
                   <p className={styles.devNote}>
                     Dev-only: couldn&apos;t email the code (sandbox mode?), so here it is directly: <b>{devOnlyCode}</b>
