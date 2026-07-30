@@ -3,6 +3,7 @@ import { supabaseServer } from "@/lib/supabase-server";
 export async function logAuditEvent(params: {
   signingRequestId?: number;
   documentId?: string;
+  participantId?: number;
   eventType: string;
   metadata?: Record<string, unknown>;
   ipAddress?: string | null;
@@ -11,6 +12,7 @@ export async function logAuditEvent(params: {
   const { error } = await supabaseServer.from("audit_events").insert({
     signing_request_id: params.signingRequestId ?? null,
     document_id: params.documentId ?? null,
+    participant_id: params.participantId ?? null,
     event_type: params.eventType,
     event_metadata: params.metadata ?? null,
     ip_address: params.ipAddress ?? null,

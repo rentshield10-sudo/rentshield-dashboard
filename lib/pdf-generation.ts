@@ -59,135 +59,125 @@ export interface AuditEventSummary {
   createdAt: string;
 }
 
-export interface CompletionCertificateParams {
-  documentId: string;
-  documentTitle: string;
-  tenantName: string;
-  tenantEmail: string;
-  propertyAddress: string;
+export interface ParticipantSignatureInfo {
+  role: string;
+  name: string;
+  email: string;
   signatureType: "typed" | "drawn";
   typedName?: string;
   signatureDataUrl?: string; // data:image/png;base64,...
-  consentText1: string;
-  consentText2: string;
-  consentVersion: number;
   openedAt: string | null;
   verifiedAt: string | null;
   consentedAt: string;
   signedAt: string;
   ipAddress: string | null;
+}
+
+export interface MultiPartyCompletionParams {
+  documentId: string;
+  documentTitle: string;
+  consentText1: string;
+  consentText2: string;
+  consentVersion: number;
   originalPdfHash: string;
+  participants: ParticipantSignatureInfo[];
   auditEvents: AuditEventSummary[];
 }
 
-// Stamps the signature onto the last page of the agreement, then appends a
-// human-readable completion certificate as final page(s). The completed
-// PDF's own hash can't be embedded in itself (the hash is only known after
-// this function finishes), so it's stored in the database row instead of
-// printed on the certificate.
-export async function stampCompletedPdf(
+// Appends a signatures page (one block per participant) and a completion
+// certificate to the agreement, once every participant has signed. The
+// original document's text isn't touched -- signatures aren't stamped
+// inline at a specific line in the agreement (the plain-text template has
+// no positional field data for that), they're recorded on a dedicated page
+// instead, alongside the certificate. The completed PDF's own hash can't be
+// embedded in itself (only known after this function finishes), so it's
+// stored in the database row rather than printed here.
+export async function stampMultiPartyCompletedPdf(
   originalPdfBytes: Buffer,
-  params: CompletionCertificateParams,
+  params: MultiPartyCompletionParams,
 ): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.load(originalPdfBytes);
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-
-  const pages = pdfDoc.getPages();
-  const lastPage = pages[pages.length - 1];
   const black = rgb(0.07, 0.09, 0.15);
-  const gray = rgb(0.4, 0.4, 0.4);
 
-  const sigBlockY = 60;
-  lastPage.drawText("Electronically signed", {
-    x: 40,
-    y: sigBlockY + 40,
-    size: 9,
-    font: boldFont,
-    color: black,
-  });
+  let page = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+  let y = PAGE_HEIGHT - MARGIN;
+  const maxWidth = PAGE_WIDTH - MARGIN * 2;
 
-  if (params.signatureType === "drawn" && params.signatureDataUrl) {
-    const base64 = params.signatureDataUrl.split(",")[1] ?? "";
-    const pngImage = await pdfDoc.embedPng(Buffer.from(base64, "base64"));
-    const scaled = pngImage.scale(1);
-    const maxWidth = 200;
-    const maxHeight = 60;
-    const ratio = Math.min(maxWidth / scaled.width, maxHeight / scaled.height, 1);
-    lastPage.drawImage(pngImage, {
-      x: 40,
-      y: sigBlockY,
-      width: scaled.width * ratio,
-      height: scaled.height * ratio,
-    });
-  } else {
-    lastPage.drawText(params.typedName || params.tenantName, {
-      x: 40,
-      y: sigBlockY,
-      size: 20,
-      font,
-      color: black,
-    });
+  function ensureSpace(needed: number) {
+    if (y - needed < MARGIN) {
+      page = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+      y = PAGE_HEIGHT - MARGIN;
+    }
   }
 
-  lastPage.drawText(`Signed by: ${params.tenantName} <${params.tenantEmail}>`, {
-    x: 40,
-    y: sigBlockY - 16,
-    size: 8,
-    font,
-    color: black,
-  });
-  lastPage.drawText(`Date: ${params.signedAt}`, { x: 40, y: sigBlockY - 28, size: 8, font, color: black });
-  lastPage.drawText(`Document ID: ${params.documentId}`, {
-    x: 40,
-    y: sigBlockY - 40,
-    size: 8,
-    font,
-    color: black,
-  });
-  lastPage.drawText(
-    "This document was electronically signed in accordance with the consent recorded below.",
-    { x: 40, y: sigBlockY - 52, size: 7, font, color: gray },
-  );
+  function line(text: string, opts: { bold?: boolean; size?: number; gapAfter?: number } = {}) {
+    const size = opts.size ?? 10;
+    const usedFont = opts.bold ? boldFont : font;
+    const wrapped = wrapLine(text, usedFont, size, maxWidth);
+    for (const l of wrapped) {
+      ensureSpace(LINE_HEIGHT);
+      page.drawText(l, { x: MARGIN, y, size, font: usedFont, color: black });
+      y -= LINE_HEIGHT;
+    }
+    if (opts.gapAfter) y -= opts.gapAfter;
+  }
+
+  // ── Signatures page(s) ──
+  line("Signatures", { bold: true, size: 16, gapAfter: 10 });
+
+  for (const p of params.participants) {
+    ensureSpace(80);
+    line(`${p.role}: ${p.name} <${p.email}>`, { bold: true });
+
+    if (p.signatureType === "drawn" && p.signatureDataUrl) {
+      const base64 = p.signatureDataUrl.split(",")[1] ?? "";
+      const pngImage = await pdfDoc.embedPng(Buffer.from(base64, "base64"));
+      const scaled = pngImage.scale(1);
+      const maxImgWidth = 180;
+      const maxImgHeight = 50;
+      const ratio = Math.min(maxImgWidth / scaled.width, maxImgHeight / scaled.height, 1);
+      const imgHeight = scaled.height * ratio;
+      ensureSpace(imgHeight + 4);
+      page.drawImage(pngImage, {
+        x: MARGIN,
+        y: y - imgHeight,
+        width: scaled.width * ratio,
+        height: imgHeight,
+      });
+      y -= imgHeight + 4;
+    } else {
+      line(p.typedName || p.name, { size: 18 });
+    }
+
+    line(`Signed: ${p.signedAt}`, { size: 8 });
+    line(`IP address: ${p.ipAddress ?? "N/A"}`, { size: 8, gapAfter: 12 });
+  }
 
   // ── Completion certificate ──
-  const certPage = pdfDoc.addPage();
-  const { height: ch } = certPage.getSize();
-  let cy = ch - 50;
-  const lineHeight = 14;
+  page = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+  y = PAGE_HEIGHT - MARGIN;
 
-  function line(text: string, opts: { bold?: boolean; size?: number } = {}) {
-    certPage.drawText(text, {
-      x: 50,
-      y: cy,
-      size: opts.size ?? 10,
-      font: opts.bold ? boldFont : font,
-      color: black,
-    });
-    cy -= lineHeight;
-  }
-
-  line("Certificate of Completion", { bold: true, size: 16 });
-  cy -= 6;
+  line("Certificate of Completion", { bold: true, size: 16, gapAfter: 6 });
   line(COMPANY_NAME, { bold: true });
   line(`Document: ${params.documentTitle}`);
-  line(`Document ID: ${params.documentId}`);
-  line(`Tenant: ${params.tenantName} <${params.tenantEmail}>`);
-  line(`Property: ${params.propertyAddress}`);
-  line("Verification method: Email one-time code");
-  cy -= 6;
-  line(`Opened: ${params.openedAt ?? "N/A"}`);
-  line(`Email verified: ${params.verifiedAt ?? "N/A"}`);
-  line(`Consent accepted: ${params.consentedAt}`);
-  line(`Signed: ${params.signedAt}`);
-  line(`IP address: ${params.ipAddress ?? "N/A"}`);
-  cy -= 6;
-  line(`Original document hash (SHA-256): ${params.originalPdfHash}`, { size: 7 });
-  cy -= 6;
+  line(`Document ID: ${params.documentId}`, { gapAfter: 6 });
+  line("Verification method: Email one-time code", { gapAfter: 6 });
+
+  for (const p of params.participants) {
+    line(`${p.role}: ${p.name} <${p.email}>`, { bold: true });
+    line(`  Opened: ${p.openedAt ?? "N/A"}`, { size: 8 });
+    line(`  Email verified: ${p.verifiedAt ?? "N/A"}`, { size: 8 });
+    line(`  Consent accepted: ${p.consentedAt}`, { size: 8 });
+    line(`  Signed: ${p.signedAt}`, { size: 8, gapAfter: 6 });
+  }
+
+  line(`Original document hash (SHA-256): ${params.originalPdfHash}`, { size: 7, gapAfter: 6 });
   line(`Consent version: ${params.consentVersion}`);
   line(`"${params.consentText1}"`, { size: 8 });
-  line(`"${params.consentText2}"`, { size: 8 });
-  cy -= 10;
+  line(`"${params.consentText2}"`, { size: 8, gapAfter: 10 });
+
   line("Audit trail:", { bold: true });
   for (const event of params.auditEvents) {
     line(`${event.createdAt} — ${event.eventType}`, { size: 8 });
