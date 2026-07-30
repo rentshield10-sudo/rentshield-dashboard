@@ -34,6 +34,12 @@ export async function POST(
       );
     }
 
+    await supabaseServer
+      .from("signing_participants")
+      .update({ status: "declined", updated_at: now })
+      .eq("signing_request_id", id)
+      .not("status", "in", "(signed,declined)");
+
     await logAuditEvent({
       signingRequestId: Number(id),
       documentId: updated[0].document_id,

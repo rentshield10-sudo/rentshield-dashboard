@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase-server";
-import { findSigningRequestByToken, isExpired } from "@/lib/signing";
+import { findParticipantByToken, isParticipantExpired } from "@/lib/signing";
 import { generateOtpCode, sha256Hex } from "@/lib/crypto-utils";
 import { logAuditEvent, getRequestMeta } from "@/lib/audit";
 import { isRateLimited } from "@/lib/rate-limit";
@@ -26,21 +26,24 @@ export async function POST(
       return NextResponse.json({ ok: false, error: "Too many requests. Try again later." }, { status: 429 });
     }
 
-    const signingRequest = await findSigningRequestByToken(token);
-    if (!signingRequest) {
+    const found = await findParticipantByToken(token);
+    if (!found) {
       return NextResponse.json({ ok: false, error: "This signing link is invalid." }, { status: 404 });
     }
-    if (isExpired(signingRequest) || ["expired", "revoked", "completed"].includes(signingRequest.status)) {
-      return NextResponse.json(
-        { ok: false, error: "This signing link is no longer active." },
-        { status: 410 },
-      );
+    const { participant, envelope } = found;
+
+    if (
+      isParticipantExpired(participant) ||
+      ["declined", "signed"].includes(participant.status) ||
+      envelope.status === "revoked"
+    ) {
+      return NextResponse.json({ ok: false, error: "This signing link is no longer active." }, { status: 410 });
     }
 
     const { data: recent, error: recentError } = await supabaseServer
-      .from("verification_codes")
+      .from("participant_verification_codes")
       .select("created_at")
-      .eq("signing_request_id", signingRequest.id)
+      .eq("participant_id", participant.id)
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -57,16 +60,17 @@ export async function POST(
     const codeHash = sha256Hex(code);
     const expiresAt = new Date(Date.now() + CODE_TTL_MS).toISOString();
 
-    const { error: insertError } = await supabaseServer.from("verification_codes").insert({
-      signing_request_id: signingRequest.id,
+    const { error: insertError } = await supabaseServer.from("participant_verification_codes").insert({
+      participant_id: participant.id,
       code_hash: codeHash,
       expires_at: expiresAt,
     });
     if (insertError) throw insertError;
 
     await logAuditEvent({
-      signingRequestId: signingRequest.id,
-      documentId: signingRequest.document_id,
+      signingRequestId: envelope.id,
+      documentId: envelope.document_id,
+      participantId: participant.id,
       eventType: "verification_code_requested",
       ipAddress,
       userAgent,
@@ -77,15 +81,12 @@ export async function POST(
 
     try {
       await sendEmail({
-        to: signingRequest.tenant_email,
+        to: participant.email,
         subject: "Your verification code",
         html: `<p>Your verification code is: <b style="font-size:20px;">${code}</b></p><p>This code expires in 10 minutes.</p>`,
       });
       emailSent = true;
     } catch (emailError) {
-      // In sandbox mode (no verified domain), Resend rejects sends to
-      // arbitrary tenant addresses -- fall back to returning the code
-      // directly, but ONLY in dev, so local testing keeps working.
       console.error("Failed to send verification code email:", emailError);
       if (!isDev) throw emailError;
     }
