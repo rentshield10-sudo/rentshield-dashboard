@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase-server";
-import { fetchAllApartmentDetails } from "@/lib/rentvine";
+import { fetchAllApartmentDetails, fetchAllRentvineFiles, matchLeasePdfFile } from "@/lib/rentvine";
 
 function toDateOrNull(value: string): string | null {
   return value ? value : null;
@@ -14,7 +14,10 @@ function toNumberOrNull(value: string): number | null {
 
 export async function POST() {
   try {
-    const rows = await fetchAllApartmentDetails();
+    const [rows, rentvineFiles] = await Promise.all([
+      fetchAllApartmentDetails(),
+      fetchAllRentvineFiles().catch(() => []), // PDF-match is best-effort; sync must not fail if this errors
+    ]);
 
     // Deduplicate by (address, unit). A unit can have more than one lease
     // record from Rentvine (e.g. a past tenant who moved out plus the
@@ -49,23 +52,32 @@ export async function POST() {
       }
     }
 
-    const upsertRows = Array.from(deduped.values()).map((r) => ({
-      address: r.address,
-      unit: r.unit,
-      tenant_name: r.tenantName || null,
-      activation_1: toDateOrNull(r.activation1),
-      expiration_1: toDateOrNull(r.expiration1),
-      activation_2: toDateOrNull(r.activation2),
-      expiration_2: toDateOrNull(r.expiration2),
-      current_rent: toNumberOrNull(r.currentRent),
-      security_deposit: toNumberOrNull(r.securityDeposit),
-      notes: r.notes || null,
-      rentvine_lease_id: r.rentvineLeaseId || null,
-      rentvine_unit_id: r.rentvineUnitId || null,
-      rentvine_lease_renewal_id: r.rentvineLeaseRenewalId || null,
-      source: "rentvine",
-      updated_at: new Date().toISOString(),
-    }));
+    const now = new Date().toISOString();
+    const upsertRows = Array.from(deduped.values()).map((r) => {
+      const matchedFile = matchLeasePdfFile(rentvineFiles, r.address, r.unit);
+      return {
+        address: r.address,
+        unit: r.unit,
+        city: r.city || null,
+        tenant_name: r.tenantName || null,
+        activation_1: toDateOrNull(r.activation1),
+        expiration_1: toDateOrNull(r.expiration1),
+        activation_2: toDateOrNull(r.activation2),
+        expiration_2: toDateOrNull(r.expiration2),
+        current_rent: toNumberOrNull(r.currentRent),
+        security_deposit: toNumberOrNull(r.securityDeposit),
+        notes: r.notes || null,
+        rentvine_lease_id: r.rentvineLeaseId || null,
+        rentvine_unit_id: r.rentvineUnitId || null,
+        rentvine_lease_renewal_id: r.rentvineLeaseRenewalId || null,
+        lease_status: r.leaseStatus || null,
+        rentvine_file_matched: matchedFile !== null,
+        rentvine_file_title: matchedFile?.title ?? null,
+        rentvine_file_checked_at: now,
+        source: "rentvine",
+        updated_at: now,
+      };
+    });
 
     if (upsertRows.length === 0) {
       return NextResponse.json({ ok: true, synced: 0 });
