@@ -27,6 +27,7 @@ export default function PdfPreviewModal({ url, title, onClose }: PdfPreviewModal
   const [pageNumber, setPageNumber] = useState(1);
   const [loadError, setLoadError] = useState("");
   const [zoom, setZoom] = useState(1);
+  const [scrollMode, setScrollMode] = useState(true);
 
   return (
     <div className={styles.overlay} onClick={onClose}>
@@ -37,22 +38,36 @@ export default function PdfPreviewModal({ url, title, onClose }: PdfPreviewModal
             <button
               type="button"
               className={styles.toolbarButton}
-              onClick={() => setPageNumber((p) => Math.max(1, p - 1))}
-              disabled={pageNumber <= 1}
+              onClick={() => setScrollMode((m) => !m)}
             >
-              ‹ Prev
+              {scrollMode ? "Single page" : "Scroll all pages"}
             </button>
-            <span className={styles.pageInfo}>
-              Page {pageNumber} of {numPages || "…"}
-            </span>
-            <button
-              type="button"
-              className={styles.toolbarButton}
-              onClick={() => setPageNumber((p) => Math.min(numPages, p + 1))}
-              disabled={pageNumber >= numPages}
-            >
-              Next ›
-            </button>
+            {!scrollMode && (
+              <>
+                <button
+                  type="button"
+                  className={styles.toolbarButton}
+                  onClick={() => setPageNumber((p) => Math.max(1, p - 1))}
+                  disabled={pageNumber <= 1}
+                >
+                  ‹ Prev
+                </button>
+                <span className={styles.pageInfo}>
+                  Page {pageNumber} of {numPages || "…"}
+                </span>
+                <button
+                  type="button"
+                  className={styles.toolbarButton}
+                  onClick={() => setPageNumber((p) => Math.min(numPages, p + 1))}
+                  disabled={pageNumber >= numPages}
+                >
+                  Next ›
+                </button>
+              </>
+            )}
+            {scrollMode && (
+              <span className={styles.pageInfo}>{numPages || "…"} pages</span>
+            )}
             <button type="button" className={styles.toolbarButton} onClick={() => setZoom((z) => Math.max(0.5, z - 0.25))}>
               −
             </button>
@@ -78,8 +93,13 @@ export default function PdfPreviewModal({ url, title, onClose }: PdfPreviewModal
               onLoadSuccess={({ numPages: n }) => setNumPages(n)}
               onLoadError={(err) => setLoadError(err.message || "Could not load this PDF.")}
               loading={<div className={styles.muted}>Loading PDF…</div>}
+              className={scrollMode ? styles.scrollPages : undefined}
             >
-              <Page pageNumber={pageNumber} scale={zoom} />
+              {scrollMode
+                ? Array.from({ length: numPages }, (_, i) => (
+                    <Page key={i + 1} pageNumber={i + 1} scale={zoom} />
+                  ))
+                : <Page pageNumber={pageNumber} scale={zoom} />}
             </Document>
           )}
         </div>

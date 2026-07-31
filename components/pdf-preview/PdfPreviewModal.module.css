@@ -97,6 +97,13 @@
     padding: 20px;
 }
 
+.scrollPages {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+}
+
 .muted {
     color: #9ca3af;
     font-size: 13px;
