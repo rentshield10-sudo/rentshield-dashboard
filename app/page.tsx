@@ -1168,11 +1168,31 @@ function ApartmentAnalytics({
 
 export default function DashboardPage() {
   const [activeView, setActiveView] = useState<ActiveView>("home");
+  const [leaseTemplateDraftId, setLeaseTemplateDraftId] = useState<number | null>(null);
+
+  function openLeaseTemplateDraft(draftId: number) {
+    setLeaseTemplateDraftId(draftId);
+    setActiveView("lease-template");
+  }
 
   // Restore the last-active tab after a page refresh instead of always
   // landing back on Home. Read client-side only (after hydration) to avoid
-  // an SSR/client markup mismatch on first render.
+  // an SSR/client markup mismatch on first render. A ?view=&draftId= URL
+  // (used to open the Lease Template tab in a new browser tab from the
+  // Rentvine tab's "Generate PDF" button) takes priority over the stored tab.
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const view = params.get("view");
+    if (view && (VALID_ACTIVE_VIEWS as string[]).includes(view)) {
+      setActiveView(view as ActiveView);
+      const draftIdParam = params.get("draftId");
+      if (draftIdParam) {
+        const draftId = Number(draftIdParam);
+        if (Number.isFinite(draftId)) setLeaseTemplateDraftId(draftId);
+      }
+      return;
+    }
+
     const stored = window.localStorage.getItem(ACTIVE_VIEW_STORAGE_KEY);
     if (stored && (VALID_ACTIVE_VIEWS as string[]).includes(stored)) {
       setActiveView(stored as ActiveView);
@@ -1913,8 +1933,8 @@ export default function DashboardPage() {
 
         {activeView === "messages" && <MessagesTab />}
 
-        {activeView === "rentvine" && <RentvineTab />}
-        {activeView === "lease-template" && <LeaseTemplateTab />}
+        {activeView === "rentvine" && <RentvineTab onEditLeasePdf={openLeaseTemplateDraft} />}
+        {activeView === "lease-template" && <LeaseTemplateTab initialDraftId={leaseTemplateDraftId} />}
       </section>
     </main>
   );

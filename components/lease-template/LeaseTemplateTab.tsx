@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import styles from "./LeaseTemplateTab.module.css";
-import { extractVariableNames, substituteVariables } from "@/lib/template-vars";
+import { extractVariableNames } from "@/lib/template-vars";
+import PdfPreviewModal from "@/components/pdf-preview/PdfPreviewModal";
 
 interface Template {
   id: number | null;
@@ -38,8 +39,60 @@ const DEFAULT_PARTICIPANT_ROWS: ParticipantFormRow[] = [
   { role: "Witness - Property Management", name: "", email: "" },
 ];
 
-export default function LeaseTemplateTab() {
+const VARIABLE_TOKEN_PATTERN = /\{\{(\w+)\}\}/g;
+
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function escapeAttr(text: string): string {
+  return escapeHtml(text).replace(/"/g, "&quot;");
+}
+
+interface TemplateBackdropProps {
+  html: string;
+  onFocus: (e: React.FocusEvent<HTMLDivElement>) => void;
+  onBlur: (e: React.FocusEvent<HTMLDivElement>) => void;
+  onKeyDown: (e: React.KeyboardEvent<HTMLDivElement>) => void;
+  onInput: (e: React.FormEvent<HTMLDivElement>) => void;
+}
+
+// Isolated + memoized so it only re-renders when `html` itself changes.
+// Without this, ANY state change in the parent (e.g. highlightedVariable,
+// updated purely to ring-highlight the matching right-pane input) causes
+// React to recreate the `{ __html }` object passed to
+// dangerouslySetInnerHTML and reset .innerHTML on this div regardless of
+// whether the string value actually changed -- destroying whichever token
+// span currently has focus mid-edit and kicking focus back to <body>
+// (confirmed live via a MutationObserver: 51 nodes replaced immediately
+// after a focus event, even though the html string itself never changed).
+const TemplateBackdrop = memo(
+  forwardRef<HTMLDivElement, TemplateBackdropProps>(function TemplateBackdrop(
+    { html, onFocus, onBlur, onKeyDown, onInput },
+    ref,
+  ) {
+    return (
+      <div
+        ref={ref}
+        className={styles.templateTextareaBackdrop}
+        onFocus={onFocus}
+        onBlur={onBlur}
+        onKeyDown={onKeyDown}
+        onInput={onInput}
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+    );
+  }),
+);
+
+interface LeaseTemplateTabProps {
+  initialDraftId?: number | null;
+}
+
+export default function LeaseTemplateTab({ initialDraftId = null }: LeaseTemplateTabProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const backdropRef = useRef<HTMLDivElement>(null);
+  const variableInputRefs = useRef<Map<string, HTMLInputElement>>(new Map());
 
   const [template, setTemplate] = useState<Template | null>(null);
   const [loadError, setLoadError] = useState("");
@@ -48,6 +101,23 @@ export default function LeaseTemplateTab() {
 
   const [draftId, setDraftId] = useState<number | null>(null);
   const [variableValues, setVariableValues] = useState<Record<string, string>>({});
+  const [highlightedVariable, setHighlightedVariable] = useState<string | null>(null);
+  const [apartmentInfo, setApartmentInfo] = useState<{ id: number; address: string; unit: string } | null>(null);
+  const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
+  const [savingPdfStatus, setSavingPdfStatus] = useState(false);
+
+  // Mirror "current" values for the stable (useCallback([])) backdrop
+  // handlers below, so they never go stale despite never being recreated.
+  // Synced via an effect rather than during render, per this project's
+  // react-hooks/refs lint rule (no ref mutation in the render body).
+  const variableValuesRef = useRef(variableValues);
+  useEffect(() => {
+    variableValuesRef.current = variableValues;
+  }, [variableValues]);
+  const setVariableValueRef = useRef<(name: string, value: string) => void>(() => {});
+  useEffect(() => {
+    setVariableValueRef.current = setVariableValue;
+  });
 
   const [signingRequests, setSigningRequests] = useState<SigningRequestSummary[]>([]);
   const [participantRows, setParticipantRows] = useState<ParticipantFormRow[]>(DEFAULT_PARTICIPANT_ROWS);
@@ -71,10 +141,13 @@ export default function LeaseTemplateTab() {
       .catch((err) => setLoadError(err instanceof Error ? err.message : "Unexpected error."));
   }, []);
 
-  // ── Create a draft + load its variable values, once ─────────────────
+  // ── Load an existing draft's values, or create a fresh one, once ────
   useEffect(() => {
-    fetch("/api/lease-template/drafts", { method: "POST", body: "{}" })
-      .then((res) => res.json())
+    const draftPromise = initialDraftId
+      ? Promise.resolve({ ok: true, draft: { id: initialDraftId } })
+      : fetch("/api/lease-template/drafts", { method: "POST", body: "{}" }).then((res) => res.json());
+
+    draftPromise
       .then((json: { ok: boolean; draft?: { id: number } }) => {
         if (json.ok && json.draft) {
           setDraftId(json.draft.id);
@@ -93,7 +166,23 @@ export default function LeaseTemplateTab() {
       .catch(() => {
         /* variable filling still usable without persisted values loaded */
       });
-  }, []);
+  }, [initialDraftId]);
+
+  // Looks up whether this draft is tied to a specific apartment (opened via
+  // Generate/Edit PDF from the Rentvine tab) vs. the standalone
+  // master-template editor -- drives the header text and whether the
+  // surrounding template wording is locked to editing just this unit.
+  useEffect(() => {
+    if (draftId === null) return;
+    fetch(`/api/lease-template/drafts/${draftId}`)
+      .then((res) => res.json())
+      .then((json: { ok: boolean; draft?: { apartment: { id: number; address: string; unit: string } | null } }) => {
+        if (json.ok && json.draft) setApartmentInfo(json.draft.apartment);
+      })
+      .catch(() => {
+        /* header just falls back to the generic title */
+      });
+  }, [draftId]);
 
   function loadSigningRequests() {
     fetch("/api/lease-signing/requests")
@@ -112,10 +201,159 @@ export default function LeaseTemplateTab() {
     [template],
   );
 
-  const previewText = useMemo(
-    () => (template ? substituteVariables(template.body, variableValues) : ""),
-    [template, variableValues],
-  );
+  // highlightedVariable is deliberately NOT a dependency here (see the
+  // useEffect below instead): if it were, focusing a left-pane token would
+  // immediately regenerate this whole innerHTML and destroy the very
+  // (now-focused) span, kicking focus back to <body> -- confirmed live,
+  // this was the actual root cause of clicks silently not working.
+  const highlightedTemplateHtml = useMemo(() => {
+    if (!template) return "";
+    const pattern = new RegExp(VARIABLE_TOKEN_PATTERN);
+    let html = "";
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(template.body)) !== null) {
+      html += escapeHtml(template.body.slice(lastIndex, match.index));
+      const name = match[1];
+      const value = variableValues[name];
+      const filled = Boolean(value);
+      const tokenClass = filled ? styles.variableTokenFilled : styles.variableToken;
+      const displayText = filled ? value! : match[0];
+      html += `<span class="${tokenClass}" data-varname="${escapeAttr(name)}" title="${escapeAttr(name)}" contenteditable="true" spellcheck="false">${escapeHtml(displayText)}</span>`;
+      lastIndex = match.index + match[0].length;
+    }
+    html += escapeHtml(template.body.slice(lastIndex));
+    return html;
+  }, [template, variableValues]);
+
+  // Applies the "active" ring to whichever left-pane token(s) match
+  // highlightedVariable via direct DOM class toggling instead of baking it
+  // into highlightedTemplateHtml -- classList.add/remove doesn't replace
+  // any DOM nodes, so it can't steal focus from a token being edited the
+  // way regenerating the innerHTML would. Re-runs after legitimate content
+  // regenerations too (e.g. once an edit commits on blur) so the ring
+  // stays correctly applied to the fresh nodes.
+  useEffect(() => {
+    const backdrop = backdropRef.current;
+    if (!backdrop) return;
+    backdrop.querySelectorAll<HTMLElement>("[data-varname]").forEach((span) => {
+      span.classList.toggle(styles.variableTokenActive, span.dataset.varname === highlightedVariable);
+    });
+  }, [highlightedVariable, highlightedTemplateHtml]);
+
+  // Tracks whether highlightedVariable's current value came from focusing
+  // a left-pane token or a right-pane input, for the recovery effect below.
+  const lastFocusSourceRef = useRef<"left" | "right" | null>(null);
+
+  // Recovery for a narrower race than the one above: clicking DIRECTLY from
+  // one left-pane token into another commits the first token's value
+  // (legitimately changing highlightedTemplateHtml) in the same browser
+  // event that focuses the second token. Since TemplateBackdrop's memo only
+  // guards against *unrelated* re-renders, this particular regen is real
+  // and still replaces every span -- including the one that had just
+  // received focus a moment earlier, before it had a chance to "stick".
+  // Once the regen settles, if focus was actually lost (fell to <body>)
+  // and the left pane was the source, re-apply it to the freshly
+  // recreated node for that variable.
+  useEffect(() => {
+    if (!highlightedVariable || lastFocusSourceRef.current !== "left") return;
+    if (document.activeElement !== document.body) return;
+    const span = backdropRef.current?.querySelector<HTMLElement>(
+      `[data-varname="${CSS.escape(highlightedVariable)}"]`,
+    );
+    if (!span) return;
+    span.focus();
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(span);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  }, [highlightedVariable, highlightedTemplateHtml]);
+
+  // Wrapped in useCallback with an empty dep array so TemplateBackdrop's
+  // memo() never sees these props change -- they read "current" values via
+  // the refs below instead of closing over state directly, avoiding stale
+  // closures while keeping the function identity permanently stable.
+  const handleBackdropFocus = useCallback((e: React.FocusEvent<HTMLDivElement>) => {
+    const tokenEl = (e.target as HTMLElement).closest<HTMLElement>("[data-varname]");
+    if (!tokenEl?.dataset.varname) return;
+    lastFocusSourceRef.current = "left";
+    setHighlightedVariable(tokenEl.dataset.varname);
+    variableInputRefs.current.get(tokenEl.dataset.varname)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    // Select the token's whole current text on focus, matching the
+    // right-pane inputs' .select() -- otherwise a click lands mid-text
+    // (like any text field) and typing inserts instead of replacing.
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(tokenEl);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  }, [setHighlightedVariable]);
+
+  // Live-mirrors each keystroke into the matching right-pane input's DOM
+  // value directly (bypassing React state) so it visibly keeps up while
+  // typing, without ever touching variableValues -- doing that would
+  // recompute highlightedTemplateHtml and regenerate the backdrop on every
+  // keystroke, destroying the very span being typed into (see
+  // handleBackdropBlur below for why the real commit is deferred to blur
+  // instead). Since the input is React-controlled, this mirrored value
+  // gets overwritten on the next unrelated re-render of this component --
+  // harmless, since the real commit on blur will have landed the true
+  // value in variableValues by then anyway.
+  const handleBackdropInput = useCallback((e: React.FormEvent<HTMLDivElement>) => {
+    const tokenEl = (e.target as HTMLElement).closest<HTMLElement>("[data-varname]");
+    const name = tokenEl?.dataset.varname;
+    if (!name) return;
+    const input = variableInputRefs.current.get(name);
+    if (input) input.value = tokenEl.textContent ?? "";
+  }, []);
+
+  // Commits the token's edited text back into variableValues (which also
+  // persists it and updates the matching right-pane input) once the user
+  // finishes editing it -- not on every keystroke, since that would replace
+  // the whole backdrop's innerHTML (see highlightedTemplateHtml) mid-type
+  // and destroy the very element being edited.
+  const handleBackdropBlur = useCallback((e: React.FocusEvent<HTMLDivElement>) => {
+    const tokenEl = (e.target as HTMLElement).closest<HTMLElement>("[data-varname]");
+    const name = tokenEl?.dataset.varname;
+    if (!name) return;
+    // Values are single-line substitutions -- collapse any line breaks a
+    // multi-line paste could have introduced into the contenteditable span.
+    const value = (tokenEl.textContent ?? "").replace(/\s+/g, " ").trim();
+    // Deferred to a macrotask: committing synchronously here would
+    // regenerate the backdrop (variableValues change) within the same
+    // browser task as this blur -- i.e. BEFORE the browser's native
+    // focus-follows-click has focused whatever the user actually clicked
+    // on. That destroys the click's real target out from under it, so its
+    // own focus event never even fires (confirmed live: clicking directly
+    // from one token into another produced zero FOCUSIN for the second
+    // token). Deferring lets that focus transition complete first; the
+    // regen still happens right after, but by then highlightedVariable
+    // already correctly names the newly-focused token, so the recovery
+    // effect above can re-apply focus to it once the regen settles.
+    setTimeout(() => setVariableValueRef.current(name, value), 0);
+    setHighlightedVariable((prev) => (prev === name ? null : prev));
+  }, [setHighlightedVariable]);
+
+  const handleBackdropKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    const tokenEl = (e.target as HTMLElement).closest<HTMLElement>("[data-varname]");
+    if (!tokenEl?.dataset.varname) return;
+    if (e.key === "Enter") {
+      e.preventDefault();
+      tokenEl.blur();
+    } else if (e.key === "Escape") {
+      const name = tokenEl.dataset.varname;
+      tokenEl.textContent = variableValuesRef.current[name] || `{{${name}}}`;
+      tokenEl.blur();
+    }
+  }, []);
+
+  function handleTextareaScroll() {
+    if (backdropRef.current && textareaRef.current) {
+      backdropRef.current.scrollTop = textareaRef.current.scrollTop;
+      backdropRef.current.scrollLeft = textareaRef.current.scrollLeft;
+    }
+  }
 
   function insertVariable(name: string) {
     if (!template) return;
@@ -155,6 +393,41 @@ export default function LeaseTemplateTab() {
     } finally {
       setSaving(false);
     }
+  }
+
+  // Per-apartment "Save": never touches the shared template wording (see
+  // saveTemplate above, used only in the standalone master-template
+  // editor) -- just flushes whatever variable is actively being edited
+  // (its real commit is normally deferred to a macrotask on blur, see
+  // handleBackdropBlur) and marks this unit's PDF-created milestone.
+  async function saveApartmentDraft() {
+    if (!apartmentInfo) return;
+    setSavingPdfStatus(true);
+    setSaveMessage("");
+    try {
+      const active = document.activeElement as HTMLElement | null;
+      const activeName = active?.dataset.varname;
+      if (activeName) {
+        const value = (active.textContent ?? "").replace(/\s+/g, " ").trim();
+        await setVariableValue(activeName, value);
+      }
+      const res = await fetch(`/api/rentvine/apartment-details/${apartmentInfo.id}/mark-pdf-created`, {
+        method: "POST",
+      });
+      const json: { ok: boolean; error?: string } = await res.json();
+      if (!json.ok) {
+        setSaveMessage(json.error || "Could not save.");
+        return;
+      }
+      setSaveMessage("Saved.");
+    } finally {
+      setSavingPdfStatus(false);
+    }
+  }
+
+  function viewPdf() {
+    if (draftId === null) return;
+    setPdfPreviewUrl(`/api/lease-template/drafts/${draftId}/preview-pdf`);
   }
 
   async function setVariableValue(name: string, value: string) {
@@ -244,7 +517,12 @@ export default function LeaseTemplateTab() {
   return (
     <div className={styles.page}>
       <div className={styles.header}>
-        <h1>Lease Template</h1>
+        <h1>
+          {apartmentInfo
+            ? `Editing ${apartmentInfo.address}${apartmentInfo.unit ? ` ${apartmentInfo.unit}` : ""}`
+            : "Lease Template"}
+        </h1>
+        {draftId !== null && <span className={styles.sessionId}>Session #{draftId}</span>}
       </div>
 
       <div className={styles.editorLayout}>
@@ -253,43 +531,75 @@ export default function LeaseTemplateTab() {
             className={styles.templateNameInput}
             value={template.name}
             onChange={(e) => setTemplate({ ...template, name: e.target.value })}
+            readOnly={!!apartmentInfo}
+            title={apartmentInfo ? "Template name can only be changed in the master template editor" : undefined}
           />
 
-          <div className={styles.variablePills}>
-            {["tenantName", "address", "city", "state", "leaseStart", "leaseEnd", "rentAmount"].map(
-              (name) => (
-                <button
-                  key={name}
-                  type="button"
-                  className={styles.variablePill}
-                  onClick={() => insertVariable(name)}
-                >
-                  {`{{${name}}}`}
-                </button>
-              ),
-            )}
+          {!apartmentInfo && (
+            <div className={styles.variablePills}>
+              {["tenantName", "address", "city", "state", "leaseStart", "leaseEnd", "rentAmount"].map(
+                (name) => (
+                  <button
+                    key={name}
+                    type="button"
+                    className={styles.variablePill}
+                    onClick={() => insertVariable(name)}
+                  >
+                    {`{{${name}}}`}
+                  </button>
+                ),
+              )}
+            </div>
+          )}
+
+          <div className={styles.templateTextareaWrap}>
+            <TemplateBackdrop
+              ref={backdropRef}
+              html={highlightedTemplateHtml}
+              onFocus={handleBackdropFocus}
+              onBlur={handleBackdropBlur}
+              onKeyDown={handleBackdropKeyDown}
+              onInput={handleBackdropInput}
+            />
+            <textarea
+              ref={textareaRef}
+              className={styles.templateTextarea}
+              value={template.body}
+              onChange={(e) => setTemplate({ ...template, body: e.target.value })}
+              onScroll={handleTextareaScroll}
+              spellCheck={false}
+              readOnly={!!apartmentInfo}
+              title={
+                apartmentInfo
+                  ? "The surrounding wording is shared across every apartment and can only be edited in the master template editor -- the {{variables}} above stay editable"
+                  : undefined
+              }
+            />
           </div>
 
-          <textarea
-            ref={textareaRef}
-            className={styles.templateTextarea}
-            value={template.body}
-            onChange={(e) => setTemplate({ ...template, body: e.target.value })}
-            rows={20}
-          />
-
           <div className={styles.editorActions}>
-            <button type="button" className={styles.primaryButton} onClick={saveTemplate} disabled={saving}>
-              {saving ? "Saving…" : "Save Template"}
+            {apartmentInfo ? (
+              <button
+                type="button"
+                className={styles.primaryButton}
+                onClick={saveApartmentDraft}
+                disabled={savingPdfStatus}
+              >
+                {savingPdfStatus ? "Saving…" : "Save"}
+              </button>
+            ) : (
+              <button type="button" className={styles.primaryButton} onClick={saveTemplate} disabled={saving}>
+                {saving ? "Saving…" : "Save Template"}
+              </button>
+            )}
+            <button type="button" className={styles.smallButton} onClick={viewPdf} disabled={draftId === null}>
+              View PDF
             </button>
             {saveMessage && <span className={styles.saveMessage}>{saveMessage}</span>}
           </div>
         </div>
 
         <div className={styles.previewPane}>
-          <h2 className={styles.sectionTitle}>Live Preview</h2>
-          <div className={styles.previewBox}>{previewText}</div>
-
           <h2 className={styles.sectionTitle}>Variables</h2>
           <div className={styles.variableForm}>
             {variableNames.length === 0 && (
@@ -297,11 +607,27 @@ export default function LeaseTemplateTab() {
             )}
             {variableNames.map((name) => (
               <div key={name} className={styles.variableRow}>
-                <label className={styles.variableLabel}>{name}</label>
+                <label className={styles.variableLabel}>
+                  <span>{name}</span>
+                  <span className={styles.variableLabelToken}>{`{{${name}}}`}</span>
+                </label>
                 <input
-                  className={styles.modalInput}
+                  ref={(el) => {
+                    if (el) variableInputRefs.current.set(name, el);
+                    else variableInputRefs.current.delete(name);
+                  }}
+                  className={
+                    highlightedVariable === name
+                      ? `${styles.modalInput} ${styles.inputHighlighted}`
+                      : styles.modalInput
+                  }
                   value={variableValues[name] ?? ""}
                   onChange={(e) => setVariableValue(name, e.target.value)}
+                  onFocus={() => {
+                    lastFocusSourceRef.current = "right";
+                    setHighlightedVariable(name);
+                  }}
+                  onBlur={() => setHighlightedVariable((prev) => (prev === name ? null : prev))}
                 />
               </div>
             ))}
@@ -419,6 +745,10 @@ export default function LeaseTemplateTab() {
           </table>
         )}
       </div>
+
+      {pdfPreviewUrl && (
+        <PdfPreviewModal url={pdfPreviewUrl} title="Lease Preview" onClose={() => setPdfPreviewUrl(null)} />
+      )}
     </div>
   );
 }

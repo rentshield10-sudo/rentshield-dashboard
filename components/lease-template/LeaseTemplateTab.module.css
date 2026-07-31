@@ -5,10 +5,23 @@
     padding: 18px;
 }
 
+.header {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+}
+
 .header h1 {
     margin: 0;
     color: #0f172a;
     font-size: 24px;
+}
+
+.sessionId {
+    font-size: 12px;
+    font-weight: 700;
+    color: #6b7280;
+    font-family: "SF Mono", "Fira Code", Consolas, monospace;
 }
 
 .errorBanner {
@@ -43,6 +56,12 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
+    height: 640px;
+    overflow: hidden;
+}
+
+.previewPane {
+    overflow-y: auto;
 }
 
 .templateNameInput {
@@ -53,6 +72,13 @@
     font-weight: 700;
     color: #0f172a;
     font-family: inherit;
+}
+
+.templateNameInput:read-only,
+.templateTextarea:read-only {
+    background: #f8fafc;
+    color: #6b7280;
+    cursor: default;
 }
 
 .variablePills {
@@ -76,16 +102,84 @@
     background: #dbeafe;
 }
 
+.templateTextareaWrap {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+}
+
+.templateTextareaBackdrop {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    margin: 0;
+    padding: 12px;
+    font-size: 13px;
+    font-family: "SF Mono", "Fira Code", Consolas, monospace;
+    line-height: 1.5;
+    color: #111827;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    overflow-y: auto;
+    box-sizing: border-box;
+    border: 1px solid transparent;
+    pointer-events: none;
+}
+
+/* Both re-enable pointer-events over the click-through backdrop (see
+   .templateTextareaBackdrop) so hover/click land on the token itself
+   instead of passing through to the invisible textarea beneath. Hovering
+   shows the variable name via the native title tooltip. Both are
+   contenteditable (see highlightedTemplateHtml), so they're directly
+   editable in place -- our own focus ring (.variableTokenActive) replaces
+   the browser's default outline. */
+.variableToken,
+.variableTokenFilled {
+    position: relative;
+    pointer-events: auto;
+    cursor: text;
+    border-radius: 3px;
+    outline: none;
+}
+
+.variableToken {
+    color: #1d4ed8;
+    font-weight: 700;
+}
+
+/* Filled-in variables: the actual value renders in place of {{token}},
+   highlighted green so it's easy to spot at a glance which ones are done. */
+.variableTokenFilled {
+    background: #dcfce7;
+    color: #166534;
+    font-weight: 700;
+    padding: 0 2px;
+}
+
+.variableTokenActive,
+.variableToken:focus,
+.variableTokenFilled:focus {
+    box-shadow: 0 0 0 2px #f59e0b;
+}
+
 .templateTextarea {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    width: 100%;
+    height: 100%;
     border: 1px solid #d1d5db;
     border-radius: 8px;
     padding: 12px;
     font-size: 13px;
     font-family: "SF Mono", "Fira Code", Consolas, monospace;
     line-height: 1.5;
-    color: #111827;
-    resize: vertical;
-    min-height: 360px;
+    background: transparent;
+    color: transparent;
+    caret-color: #111827;
+    resize: none;
+    box-sizing: border-box;
+    overflow-y: auto;
 }
 
 .editorActions {
@@ -108,18 +202,6 @@
     letter-spacing: 0.03em;
 }
 
-.previewBox {
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
-    padding: 14px;
-    font-size: 13px;
-    line-height: 1.6;
-    color: #111827;
-    white-space: pre-wrap;
-    min-height: 220px;
-    background: #f8fafc;
-}
-
 .variableForm {
     display: flex;
     flex-direction: column;
@@ -133,9 +215,20 @@
 }
 
 .variableLabel {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
     font-size: 11px;
     font-weight: 700;
     color: #374151;
+}
+
+.variableLabelToken {
+    font-family: "SF Mono", "Fira Code", Consolas, monospace;
+    font-size: 10px;
+    font-weight: 700;
+    color: #1d4ed8;
 }
 
 /* ── Shared inputs/buttons ───────────────────────────────────────────── */
@@ -147,6 +240,11 @@
     font-size: 13px;
     font-family: inherit;
     color: #111827;
+}
+
+.inputHighlighted {
+    border-color: #2563eb;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.25);
 }
 
 .primaryButton {
