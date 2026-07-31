@@ -43,7 +43,12 @@ interface ParticipantFormRow {
 const DEFAULT_PARTICIPANT_ROWS: ParticipantFormRow[] = [
   { role: "Tenant", name: "", email: "", autoLinkedName: true },
   { role: "Landlord", name: "", email: "", autoLinkedName: true },
-  { role: "Witness - Property Management", name: "", email: "", autoLinkedName: false },
+  {
+    role: "Witness - Property Management",
+    name: "Moises Mari",
+    email: "almopropertiesllc@gmail.com",
+    autoLinkedName: false,
+  },
 ];
 
 // Kept in sync with lib/template-vars.ts's VARIABLE_PATTERN -- allows
