@@ -1,5 +1,8 @@
 import { Document, Page, View, Text, StyleSheet, renderToBuffer } from "@react-pdf/renderer";
 import type { ReactElement } from "react";
+import { SignatureBlock, type SignatureBlockParticipant } from "@/lib/pdf-signature-block";
+
+export type { SignatureBlockParticipant };
 
 // Replicates the reference lease document's exact visual structure (bold
 // numbered section headers, centered underlined title, justified body
@@ -42,44 +45,6 @@ const styles = StyleSheet.create({
   bulletText: {
     flex: 1,
     textAlign: "justify",
-  },
-  dividerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginVertical: 18,
-  },
-  dividerLine: {
-    flex: 1,
-    borderBottom: "1pt solid #111111",
-  },
-  dividerLabel: {
-    marginHorizontal: 10,
-    fontSize: 10,
-    fontFamily: "Helvetica-Bold",
-  },
-  sigHeading: {
-    fontFamily: "Helvetica-Bold",
-    fontSize: 12,
-    textAlign: "center",
-    marginBottom: 16,
-  },
-  sigRoleHeading: {
-    fontFamily: "Helvetica-Bold",
-    fontSize: 11,
-    marginTop: 14,
-    marginBottom: 6,
-  },
-  sigLine: {
-    flexDirection: "row",
-    marginBottom: 14,
-  },
-  sigLineLabel: {
-    marginRight: 4,
-  },
-  sigLineBlank: {
-    borderBottom: "1pt solid #111111",
-    minWidth: 130,
-    marginRight: 14,
   },
 });
 
@@ -187,56 +152,6 @@ function renderBlock(block: string, index: number): ReactElement {
   );
 }
 
-export interface SignatureBlockParticipant {
-  role: string;
-  name: string;
-}
-
-function SignatureBlock({ participants }: { participants: SignatureBlockParticipant[] }) {
-  const landlord = participants.filter((p) => p.role === "Landlord");
-  const tenants = participants.filter((p) => p.role === "Tenant");
-  const witnesses = participants.filter((p) => p.role !== "Landlord" && p.role !== "Tenant");
-
-  function sigLine(name: string, key: string) {
-    return (
-      <View key={key} style={styles.sigLine}>
-        <Text style={styles.sigLineLabel}>Sign:</Text>
-        <View style={styles.sigLineBlank} />
-        <Text style={styles.sigLineLabel}>Print: {name || "___________"}</Text>
-        <Text style={styles.sigLineLabel}> Date:</Text>
-      </View>
-    );
-  }
-
-  return (
-    <View>
-      <View style={styles.dividerRow}>
-        <View style={styles.dividerLine} />
-        <Text style={styles.dividerLabel}>END OF CONTRACT</Text>
-        <View style={styles.dividerLine} />
-      </View>
-      <Text style={styles.sigHeading}>
-        WITNESS THE SIGNATURES OF THE PARTIES TO THIS RESIDENTIAL LEASE AGREEMENT
-      </Text>
-
-      <Text style={styles.sigRoleHeading}>LANDLORD</Text>
-      {landlord.length > 0
-        ? landlord.map((p, i) => sigLine(p.name, `landlord-${i}`))
-        : sigLine("", "landlord-0")}
-
-      <Text style={styles.sigRoleHeading}>TENANT</Text>
-      {tenants.length > 0 ? tenants.map((p, i) => sigLine(p.name, `tenant-${i}`)) : sigLine("", "tenant-0")}
-
-      {witnesses.map((p, i) => (
-        <View key={`witness-${i}`}>
-          <Text style={styles.sigRoleHeading}>{p.role.toUpperCase()}</Text>
-          {sigLine(p.name, `witness-line-${i}`)}
-        </View>
-      ))}
-    </View>
-  );
-}
-
 function LeaseDocument({
   text,
   participants,
@@ -256,7 +171,7 @@ function LeaseDocument({
       <Page size="LETTER" style={styles.page} wrap>
         <Text style={styles.title}>{title}</Text>
         {body.map((block, i) => renderBlock(block, i))}
-        <SignatureBlock participants={participants} />
+        <SignatureBlock participants={participants} dividerLabel="END OF CONTRACT" />
       </Page>
     </Document>
   );

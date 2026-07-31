@@ -2,6 +2,7 @@ import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf
 import { readFile } from "fs/promises";
 import path from "path";
 import { renderLeaseLayoutPdf, type SignatureBlockParticipant } from "@/lib/lease-pdf-layout";
+import { renderLeadPaintDisclosurePdf } from "@/lib/lead-paint-disclosure-layout";
 
 const PAGE_WIDTH = 612; // US Letter, points
 const PAGE_HEIGHT = 792;
@@ -69,6 +70,13 @@ export async function renderCombinedLeasePdf(
 ): Promise<Uint8Array> {
   const leaseBytes = await renderLeaseLayoutPdf(text, participants);
   const mergedDoc = await PDFDocument.load(leaseBytes);
+
+  const disclosureBytes = await renderLeadPaintDisclosurePdf(participants);
+  const disclosureDoc = await PDFDocument.load(disclosureBytes);
+  const disclosurePages = await mergedDoc.copyPages(disclosureDoc, disclosureDoc.getPageIndices());
+  for (const page of disclosurePages) {
+    mergedDoc.addPage(page);
+  }
 
   const pamphletBytes = await readFile(LEAD_PAINT_PAMPHLET_PATH);
   const pamphletDoc = await PDFDocument.load(pamphletBytes);
