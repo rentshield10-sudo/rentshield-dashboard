@@ -265,13 +265,20 @@ export default function LeaseTemplateTab({ initialDraftId = null, onDirtyChange 
         rows[landlordIdx] = { ...rows[landlordIdx], name: landlordName.trim() };
       }
 
-      const cleanTenantNames = tenantNames.map((n) => n.trim()).filter(Boolean);
+      // Deliberately NOT filtering out blank boxes before mapping by index
+      // -- tenantRowIndexes below is built from ALL existing Tenant rows
+      // (blank or not), so a filtered array would misalign the two lists
+      // whenever an earlier box is still blank (e.g. box 1 empty, box 2
+      // just filled in): the filtered array's index 0 would land on
+      // tenantRowIndexes[0] -- box 1's row -- silently overwriting it
+      // instead of creating box 2's own row.
       const tenantRowIndexes = rows.reduce<number[]>((acc, r, i) => {
         if (r.role === "Tenant") acc.push(i);
         return acc;
       }, []);
 
-      cleanTenantNames.forEach((tenantName, i) => {
+      tenantNames.forEach((rawName, i) => {
+        const tenantName = rawName.trim();
         const rowIdx = tenantRowIndexes[i];
         if (rowIdx !== undefined) {
           if (rows[rowIdx].autoLinkedName) {
