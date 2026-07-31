@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import styles from "./RentvineTab.module.css";
+import PdfPreviewModal from "@/components/pdf-preview/PdfPreviewModal";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -34,6 +35,7 @@ interface ApartmentDetailRow {
   id: number;
   address: string;
   unit: string;
+  city: string | null;
   tenant_name: string | null;
   activation_1: string | null;
   expiration_1: string | null;
@@ -50,6 +52,14 @@ interface ApartmentDetailRow {
   rentvine_lease_id: string | null;
   rentvine_unit_id: string | null;
   rentvine_lease_renewal_id: string | null;
+  rentvine_file_matched: boolean;
+  rentvine_file_title: string | null;
+  rentvine_file_checked_at: string | null;
+  pdf_manual_flag: boolean;
+  uploaded_via_mission_control_at: string | null;
+  uploaded_via_mission_control_file_id: string | null;
+  pdf_saved_status: string | null;
+  pdf_saved_at: string | null;
   source: string;
   updated_at: string;
 }
@@ -64,6 +74,8 @@ interface RowActionStatus {
   supabase: RowActionState;
   sheet: RowActionState;
   rentvine: RowActionState;
+  uploadPdf: RowActionState;
+  generatePdf: RowActionState;
   errorMessage?: string;
 }
 
@@ -121,7 +133,11 @@ function formatFetchedAt(iso: string): string {
   });
 }
 
-export default function RentvineTab() {
+interface RentvineTabProps {
+  onEditLeasePdf: (draftId: number) => void;
+}
+
+export default function RentvineTab({ onEditLeasePdf }: RentvineTabProps) {
   const cached = typeof window !== "undefined" ? loadCache() : null;
 
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">(
@@ -176,6 +192,10 @@ export default function RentvineTab() {
   const [extractStatus, setExtractStatus] = useState<Record<number, "idle" | "extracting" | "error">>({});
   const [extractErrorMessage, setExtractErrorMessage] = useState<Record<number, string>>({});
   const [rentvinePreviewLoadingId, setRentvinePreviewLoadingId] = useState<number | null>(null);
+  const [previewPdfLoadingId, setPreviewPdfLoadingId] = useState<number | null>(null);
+  const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
+  const [editPdfLoadingId, setEditPdfLoadingId] = useState<number | null>(null);
+  const [pdfFlagUpdatingId, setPdfFlagUpdatingId] = useState<number | null>(null);
   const [rentvinePreview, setRentvinePreview] = useState<{
     row: ApartmentDetailRow;
     current: { startDate: string | null; endDate: string | null; rent: string | null };
@@ -186,10 +206,10 @@ export default function RentvineTab() {
   const APARTMENT_COLUMN_LABELS = [
     "Address", "Unit", "Tenant", "Activation 1", "Expiration 1",
     "Activation 2", "Expiration 2", "New Rent", "Current Rent",
-    "Security Deposit", "Lease Status", "Notes", "Extract PDF",
+    "Security Deposit", "Lease Status", "Notes", "Lease PDF", "PDF Actions",
   ];
   const [columnWidths, setColumnWidths] = useState<number[]>([
-    140, 60, 140, 76, 76, 76, 76, 80, 66, 100, 90, 120, 110,
+    140, 60, 140, 76, 76, 76, 76, 80, 66, 100, 90, 120, 150, 150,
   ]);
   const resizingColRef = useRef<{ index: number; startX: number; startWidth: number } | null>(null);
 
@@ -349,6 +369,8 @@ export default function RentvineTab() {
         supabase: prev[rowId]?.supabase ?? "idle",
         sheet: prev[rowId]?.sheet ?? "idle",
         rentvine: prev[rowId]?.rentvine ?? "idle",
+        uploadPdf: prev[rowId]?.uploadPdf ?? "idle",
+        generatePdf: prev[rowId]?.generatePdf ?? "idle",
         ...patch,
       },
     }));
@@ -514,6 +536,110 @@ export default function RentvineTab() {
     const row = rentvinePreview.row;
     setRentvinePreview(null);
     await saveToRentvine(row);
+  }
+
+  // Gets-or-creates this row's lease draft, pre-filling every template
+  // variable Rentvine's data can answer (address, unit, tenant names,
+  // dates, rent, deposit, county) plus the fixed defaults, then opens the
+  // Lease Template tab in a NEW browser tab (via a ?view=/&draftId= URL
+  // app/page.tsx reads on load) so this Rentvine tab stays where it is.
+  async function generateLeasePdf(row: ApartmentDetailRow) {
+    setRowStatus(row.id, { generatePdf: "saving", errorMessage: undefined });
+    try {
+      const res = await fetch(`/api/lease-template/drafts/by-apartment/${row.id}`);
+      const json: { ok: boolean; error?: string; draftId?: number } = await res.json();
+      if (!json.ok || !json.draftId) {
+        setRowStatus(row.id, { generatePdf: "error", errorMessage: json.error || "Could not generate the lease draft." });
+        return;
+      }
+      setRowStatus(row.id, { generatePdf: "success" });
+      window.open(`/?view=lease-template&draftId=${json.draftId}`, "_blank", "noopener,noreferrer");
+    } catch (err) {
+      setRowStatus(row.id, {
+        generatePdf: "error",
+        errorMessage: err instanceof Error ? err.message : "Unexpected error.",
+      });
+    }
+  }
+
+  async function previewLeasePdf(row: ApartmentDetailRow) {
+    setPreviewPdfLoadingId(row.id);
+    setRowStatus(row.id, { errorMessage: undefined });
+    try {
+      const res = await fetch(`/api/lease-template/drafts/by-apartment/${row.id}`);
+      const json: { ok: boolean; error?: string; draftId?: number } = await res.json();
+      if (!json.ok || !json.draftId) {
+        setRowStatus(row.id, { errorMessage: json.error || "Could not prepare the lease draft." });
+        return;
+      }
+      setPdfPreviewUrl(`/api/lease-template/drafts/${json.draftId}/preview-pdf`);
+    } catch (err) {
+      setRowStatus(row.id, { errorMessage: err instanceof Error ? err.message : "Unexpected error." });
+    } finally {
+      setPreviewPdfLoadingId(null);
+    }
+  }
+
+  async function editLeasePdf(row: ApartmentDetailRow) {
+    setEditPdfLoadingId(row.id);
+    setRowStatus(row.id, { errorMessage: undefined });
+    try {
+      const res = await fetch(`/api/lease-template/drafts/by-apartment/${row.id}`);
+      const json: { ok: boolean; error?: string; draftId?: number } = await res.json();
+      if (!json.ok || !json.draftId) {
+        setRowStatus(row.id, { errorMessage: json.error || "Could not prepare the lease draft." });
+        return;
+      }
+      onEditLeasePdf(json.draftId);
+    } catch (err) {
+      setRowStatus(row.id, { errorMessage: err instanceof Error ? err.message : "Unexpected error." });
+    } finally {
+      setEditPdfLoadingId(null);
+    }
+  }
+
+  async function uploadLeasePdfToRentvine(row: ApartmentDetailRow) {
+    setRowStatus(row.id, { uploadPdf: "saving", errorMessage: undefined });
+    try {
+      const res = await fetch(`/api/rentvine/apartment-details/${row.id}/upload-lease-pdf`, {
+        method: "POST",
+      });
+      const json: { ok: boolean; error?: string } = await res.json();
+      if (!json.ok) {
+        setRowStatus(row.id, { uploadPdf: "error", errorMessage: json.error || "Upload to Rentvine failed." });
+        return;
+      }
+      setRowStatus(row.id, { uploadPdf: "success" });
+      await loadApartmentDetails();
+    } catch (err) {
+      setRowStatus(row.id, {
+        uploadPdf: "error",
+        errorMessage: err instanceof Error ? err.message : "Unexpected error.",
+      });
+    }
+  }
+
+  async function togglePdfManualFlag(row: ApartmentDetailRow) {
+    setPdfFlagUpdatingId(row.id);
+    try {
+      const res = await fetch(`/api/rentvine/apartment-details/${row.id}/pdf-manual-flag`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ flag: !row.pdf_manual_flag }),
+      });
+      const json: { ok: boolean; error?: string } = await res.json();
+      if (json.ok) {
+        setApartmentRows((prev) =>
+          prev.map((r) => (r.id === row.id ? { ...r, pdf_manual_flag: !row.pdf_manual_flag } : r)),
+        );
+      } else {
+        setRowStatus(row.id, { errorMessage: json.error || "Could not update the PDF flag." });
+      }
+    } catch (err) {
+      setRowStatus(row.id, { errorMessage: err instanceof Error ? err.message : "Unexpected error." });
+    } finally {
+      setPdfFlagUpdatingId(null);
+    }
   }
 
   const MAX_PDF_UPLOAD_BYTES = 4 * 1024 * 1024; // 4MB, matches the server-side limit
@@ -1008,6 +1134,42 @@ export default function RentvineTab() {
                         />
                       </td>
                       <td>
+                        {row.uploaded_via_mission_control_at ? (
+                          <span className={styles.pdfStatusUploaded} title={row.rentvine_file_title ?? undefined}>
+                            ✓ Uploaded via Mission Control
+                          </span>
+                        ) : row.pdf_saved_status === "pdf_created" ? (
+                          <span className={styles.pdfStatusCreated}>
+                            PDF Created — Saved {formatDate(row.pdf_saved_at)}
+                          </span>
+                        ) : row.rentvine_file_matched ? (
+                          <span className={styles.pdfStatusFound} title={row.rentvine_file_title ?? undefined}>
+                            Lease PDF found in Rentvine
+                          </span>
+                        ) : row.pdf_manual_flag ? (
+                          <span className={styles.pdfStatusFound}>Has PDF (marked manually)</span>
+                        ) : (
+                          <span className={styles.muted}>No PDF found</span>
+                        )}
+                        <label className={styles.pdfManualToggle}>
+                          <input
+                            type="checkbox"
+                            checked={row.pdf_manual_flag}
+                            disabled={pdfFlagUpdatingId === row.id}
+                            onChange={() => togglePdfManualFlag(row)}
+                          />
+                          Already has PDF
+                        </label>
+                        <a
+                          href={`/rentvine/pdf-history/${row.id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={styles.pdfHistoryLink}
+                        >
+                          History
+                        </a>
+                      </td>
+                      <td>
                         <div className={styles.rowActionsVertical}>
                           <input
                             type="file"
@@ -1026,6 +1188,51 @@ export default function RentvineTab() {
                               <span className={styles.spinner} />
                             ) : (
                               "Extract"
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            className={styles.smallButton}
+                            onClick={() => generateLeasePdf(row)}
+                            disabled={actionStatus?.generatePdf === "saving"}
+                          >
+                            {actionStatus?.generatePdf === "saving" ? (
+                              <span className={styles.spinner} />
+                            ) : actionStatus?.generatePdf === "success" ? (
+                              "✓ Generated"
+                            ) : (
+                              "Generate PDF"
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            className={styles.smallButton}
+                            onClick={() => previewLeasePdf(row)}
+                            disabled={previewPdfLoadingId === row.id}
+                          >
+                            {previewPdfLoadingId === row.id ? <span className={styles.spinner} /> : "Preview PDF"}
+                          </button>
+                          <button
+                            type="button"
+                            className={styles.smallButton}
+                            onClick={() => editLeasePdf(row)}
+                            disabled={editPdfLoadingId === row.id}
+                          >
+                            {editPdfLoadingId === row.id ? <span className={styles.spinner} /> : "Edit PDF"}
+                          </button>
+                          <button
+                            type="button"
+                            className={styles.smallButton}
+                            onClick={() => uploadLeasePdfToRentvine(row)}
+                            disabled={actionStatus?.uploadPdf === "saving" || !row.rentvine_lease_id}
+                            title={!row.rentvine_lease_id ? "No linked Rentvine lease" : undefined}
+                          >
+                            {actionStatus?.uploadPdf === "saving" ? (
+                              <span className={styles.spinner} />
+                            ) : actionStatus?.uploadPdf === "success" ? (
+                              "✓ Uploaded"
+                            ) : (
+                              "Upload to Rentvine"
                             )}
                           </button>
                         </div>
@@ -1172,6 +1379,10 @@ export default function RentvineTab() {
             </div>
           </div>
         </div>
+      )}
+
+      {pdfPreviewUrl && (
+        <PdfPreviewModal url={pdfPreviewUrl} title="Lease Preview" onClose={() => setPdfPreviewUrl(null)} />
       )}
     </div>
   );
