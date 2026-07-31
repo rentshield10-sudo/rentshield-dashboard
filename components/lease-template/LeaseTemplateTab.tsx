@@ -31,12 +31,19 @@ interface ParticipantFormRow {
   role: string;
   name: string;
   email: string;
+  // True until staff directly edits this row's name in the Send for
+  // Signing panel -- while true, the name keeps mirroring live from the
+  // landlordName/tenant-name-box fields above (see
+  // syncParticipantRowsFromVariables) instead of only filling once while
+  // still blank, which would otherwise freeze at whatever partial value
+  // existed after the very first keystroke typed above.
+  autoLinkedName: boolean;
 }
 
 const DEFAULT_PARTICIPANT_ROWS: ParticipantFormRow[] = [
-  { role: "Landlord", name: "", email: "" },
-  { role: "Tenant", name: "", email: "" },
-  { role: "Witness - Property Management", name: "", email: "" },
+  { role: "Landlord", name: "", email: "", autoLinkedName: true },
+  { role: "Tenant", name: "", email: "", autoLinkedName: true },
+  { role: "Witness - Property Management", name: "", email: "", autoLinkedName: false },
 ];
 
 // Kept in sync with lib/template-vars.ts's VARIABLE_PATTERN -- allows
@@ -170,16 +177,56 @@ export default function LeaseTemplateTab({ initialDraftId = null }: LeaseTemplat
           const map: Record<string, string> = {};
           for (const v of json.values) map[v.variable_name] = v.value;
           setVariableValues(map);
-          if (map.tenantNames) {
-            const boxes = map.tenantNames.split(",").map((n) => n.trim()).filter(Boolean);
-            setTenantNameBoxes(boxes.length > 0 ? boxes : [""]);
-          }
+          const boxes = map.tenantNames
+            ? map.tenantNames.split(",").map((n) => n.trim()).filter(Boolean)
+            : [];
+          if (boxes.length > 0) setTenantNameBoxes(boxes);
+          syncParticipantRowsFromVariables(map.landlordName ?? "", boxes);
         }
       })
       .catch(() => {
         /* variable filling still usable without persisted values loaded */
       });
   }, [initialDraftId]);
+
+  // Auto-fills the "Send for Signing" participant names from what's
+  // already been typed above (landlordName, the tenant name boxes -- which
+  // themselves came from Rentvine's data when the draft was created) so
+  // staff don't have to retype names that are already on the page. Only
+  // fills blank name fields and adds a Tenant row per extra tenant name --
+  // never overwrites a name staff already typed in this panel. Called
+  // directly from the actions that change landlordName/tenant boxes
+  // (setVariableValue, syncTenantNameBoxes, and the initial draft-values
+  // load) rather than derived via an effect.
+  function syncParticipantRowsFromVariables(landlordName: string, tenantNames: string[]) {
+    setParticipantRows((prev) => {
+      const rows = [...prev];
+
+      const landlordIdx = rows.findIndex((r) => r.role === "Landlord");
+      if (landlordIdx !== -1 && rows[landlordIdx].autoLinkedName) {
+        rows[landlordIdx] = { ...rows[landlordIdx], name: landlordName.trim() };
+      }
+
+      const cleanTenantNames = tenantNames.map((n) => n.trim()).filter(Boolean);
+      const tenantRowIndexes = rows.reduce<number[]>((acc, r, i) => {
+        if (r.role === "Tenant") acc.push(i);
+        return acc;
+      }, []);
+
+      cleanTenantNames.forEach((tenantName, i) => {
+        const rowIdx = tenantRowIndexes[i];
+        if (rowIdx !== undefined) {
+          if (rows[rowIdx].autoLinkedName) {
+            rows[rowIdx] = { ...rows[rowIdx], name: tenantName };
+          }
+        } else {
+          rows.push({ role: "Tenant", name: tenantName, email: "", autoLinkedName: true });
+        }
+      });
+
+      return rows;
+    });
+  }
 
   // Looks up whether this draft is tied to a specific apartment (opened via
   // Generate/Edit PDF from the Rentvine tab) vs. the standalone
@@ -445,6 +492,7 @@ export default function LeaseTemplateTab({ initialDraftId = null }: LeaseTemplat
 
   async function setVariableValue(name: string, value: string) {
     setVariableValues((prev) => ({ ...prev, [name]: value }));
+    if (name === "landlordName") syncParticipantRowsFromVariables(value, tenantNameBoxes);
     if (draftId === null) return;
     await fetch(`/api/lease-template/drafts/${draftId}/values`, {
       method: "PATCH",
@@ -459,6 +507,7 @@ export default function LeaseTemplateTab({ initialDraftId = null }: LeaseTemplat
       "tenantNames",
       boxes.map((b) => b.trim()).filter(Boolean).join(", "),
     );
+    syncParticipantRowsFromVariables(variableValues.landlordName ?? "", boxes);
   }
 
   function updateTenantNameBox(index: number, value: string) {
@@ -477,11 +526,21 @@ export default function LeaseTemplateTab({ initialDraftId = null }: LeaseTemplat
   }
 
   function updateParticipantRow(index: number, patch: Partial<ParticipantFormRow>) {
-    setParticipantRows((prev) => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+    setParticipantRows((prev) =>
+      prev.map((row, i) => {
+        if (i !== index) return row;
+        // Editing the name directly detaches this row from the
+        // landlordName/tenant-box auto-fill for good -- otherwise the next
+        // keystroke typed above would immediately overwrite what staff
+        // just typed here.
+        const detach = "name" in patch ? { autoLinkedName: false } : {};
+        return { ...row, ...patch, ...detach };
+      }),
+    );
   }
 
   function addParticipantRow() {
-    setParticipantRows((prev) => [...prev, { role: "", name: "", email: "" }]);
+    setParticipantRows((prev) => [...prev, { role: "", name: "", email: "", autoLinkedName: false }]);
   }
 
   function removeParticipantRow(index: number) {
