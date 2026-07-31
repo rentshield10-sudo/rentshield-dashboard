@@ -106,6 +106,13 @@ export default function LeaseTemplateTab({ initialDraftId = null }: LeaseTemplat
   const [highlightedVariable, setHighlightedVariable] = useState<string | null>(null);
   const [apartmentInfo, setApartmentInfo] = useState<{ id: number; address: string; unit: string } | null>(null);
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
+
+  // tenantNames stays a single {{variable}} in the template (one clean
+  // comma-joined string substituted into "the Lessee: {{tenantNames}}"),
+  // but is edited here as separate add/remove-able boxes instead of one
+  // comma-typed field -- this local array is the source of truth for the
+  // boxes; variableValues.tenantNames is kept in sync as their join.
+  const [tenantNameBoxes, setTenantNameBoxes] = useState<string[]>([""]);
   const [savingPdfStatus, setSavingPdfStatus] = useState(false);
 
   // Mirror "current" values for the stable (useCallback([])) backdrop
@@ -163,6 +170,10 @@ export default function LeaseTemplateTab({ initialDraftId = null }: LeaseTemplat
           const map: Record<string, string> = {};
           for (const v of json.values) map[v.variable_name] = v.value;
           setVariableValues(map);
+          if (map.tenantNames) {
+            const boxes = map.tenantNames.split(",").map((n) => n.trim()).filter(Boolean);
+            setTenantNameBoxes(boxes.length > 0 ? boxes : [""]);
+          }
         }
       })
       .catch(() => {
@@ -442,6 +453,29 @@ export default function LeaseTemplateTab({ initialDraftId = null }: LeaseTemplat
     });
   }
 
+  function syncTenantNameBoxes(boxes: string[]) {
+    setTenantNameBoxes(boxes);
+    setVariableValue(
+      "tenantNames",
+      boxes.map((b) => b.trim()).filter(Boolean).join(", "),
+    );
+  }
+
+  function updateTenantNameBox(index: number, value: string) {
+    const next = [...tenantNameBoxes];
+    next[index] = value;
+    syncTenantNameBoxes(next);
+  }
+
+  function addTenantNameBox() {
+    syncTenantNameBoxes([...tenantNameBoxes, ""]);
+  }
+
+  function removeTenantNameBox(index: number) {
+    const next = tenantNameBoxes.filter((_, i) => i !== index);
+    syncTenantNameBoxes(next.length > 0 ? next : [""]);
+  }
+
   function updateParticipantRow(index: number, patch: Partial<ParticipantFormRow>) {
     setParticipantRows((prev) => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)));
   }
@@ -613,24 +647,67 @@ export default function LeaseTemplateTab({ initialDraftId = null }: LeaseTemplat
                   <span>{name}</span>
                   <span className={styles.variableLabelToken}>{`{{${name}}}`}</span>
                 </label>
-                <input
-                  ref={(el) => {
-                    if (el) variableInputRefs.current.set(name, el);
-                    else variableInputRefs.current.delete(name);
-                  }}
-                  className={
-                    highlightedVariable === name
-                      ? `${styles.modalInput} ${styles.inputHighlighted}`
-                      : styles.modalInput
-                  }
-                  value={variableValues[name] ?? ""}
-                  onChange={(e) => setVariableValue(name, e.target.value)}
-                  onFocus={() => {
-                    lastFocusSourceRef.current = "right";
-                    setHighlightedVariable(name);
-                  }}
-                  onBlur={() => setHighlightedVariable((prev) => (prev === name ? null : prev))}
-                />
+                {name === "tenantNames" ? (
+                  <div className={styles.tenantNameBoxes}>
+                    {tenantNameBoxes.map((box, i) => (
+                      <div key={i} className={styles.tenantNameBoxRow}>
+                        <input
+                          ref={
+                            i === 0
+                              ? (el) => {
+                                  if (el) variableInputRefs.current.set(name, el);
+                                  else variableInputRefs.current.delete(name);
+                                }
+                              : undefined
+                          }
+                          className={
+                            highlightedVariable === name
+                              ? `${styles.modalInput} ${styles.inputHighlighted}`
+                              : styles.modalInput
+                          }
+                          placeholder={`Tenant ${i + 1} name`}
+                          value={box}
+                          onChange={(e) => updateTenantNameBox(i, e.target.value)}
+                          onFocus={() => {
+                            lastFocusSourceRef.current = "right";
+                            setHighlightedVariable(name);
+                          }}
+                          onBlur={() => setHighlightedVariable((prev) => (prev === name ? null : prev))}
+                        />
+                        <button
+                          type="button"
+                          className={styles.tenantNameRemoveButton}
+                          onClick={() => removeTenantNameBox(i)}
+                          disabled={tenantNameBoxes.length <= 1}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                    <button type="button" className={styles.smallButton} onClick={addTenantNameBox}>
+                      + Add Tenant
+                    </button>
+                  </div>
+                ) : (
+                  <input
+                    ref={(el) => {
+                      if (el) variableInputRefs.current.set(name, el);
+                      else variableInputRefs.current.delete(name);
+                    }}
+                    className={
+                      highlightedVariable === name
+                        ? `${styles.modalInput} ${styles.inputHighlighted}`
+                        : styles.modalInput
+                    }
+                    value={variableValues[name] ?? ""}
+                    onChange={(e) => setVariableValue(name, e.target.value)}
+                    onFocus={() => {
+                      lastFocusSourceRef.current = "right";
+                      setHighlightedVariable(name);
+                    }}
+                    onBlur={() => setHighlightedVariable((prev) => (prev === name ? null : prev))}
+                  />
+                )}
               </div>
             ))}
           </div>

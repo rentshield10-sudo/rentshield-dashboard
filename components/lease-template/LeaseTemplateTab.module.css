@@ -214,6 +214,42 @@
     gap: 3px;
 }
 
+.tenantNameBoxes {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.tenantNameBoxRow {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.tenantNameBoxRow .modalInput {
+    flex: 1;
+}
+
+.tenantNameRemoveButton {
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    background: #ffffff;
+    color: #9ca3af;
+    font-size: 12px;
+    padding: 8px 10px;
+    cursor: pointer;
+}
+
+.tenantNameRemoveButton:hover:not(:disabled) {
+    color: #dc2626;
+    border-color: #fca5a5;
+}
+
+.tenantNameRemoveButton:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
 .variableLabel {
     display: flex;
     align-items: baseline;
