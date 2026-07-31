@@ -1169,10 +1169,30 @@ function ApartmentAnalytics({
 export default function DashboardPage() {
   const [activeView, setActiveView] = useState<ActiveView>("home");
   const [leaseTemplateDraftId, setLeaseTemplateDraftId] = useState<number | null>(null);
+  // Set by LeaseTemplateTab while it has unsaved wording edits (master
+  // editor only) -- checked before an in-app tab switch away from it, since
+  // that's a same-page navigation the browser's own beforeunload can't see.
+  const [leaseTemplateDirty, setLeaseTemplateDirty] = useState(false);
 
   function openLeaseTemplateDraft(draftId: number) {
     setLeaseTemplateDraftId(draftId);
     setActiveView("lease-template");
+  }
+
+  function navigateTo(view: ActiveView) {
+    if (activeView === "lease-template" && view !== "lease-template" && leaseTemplateDirty) {
+      const proceed = window.confirm(
+        "You have unsaved changes on the Lease Template tab. Leave without saving?",
+      );
+      if (!proceed) return;
+    }
+    // Direct clicks on the "Lease Template" nav item should always start
+    // from a blank standalone draft, not silently reuse whatever
+    // apartment-linked draft was last opened via Rentvine's "Generate/Edit
+    // PDF" (which goes through openLeaseTemplateDraft above instead, so it
+    // never hits this reset).
+    if (view === "lease-template") setLeaseTemplateDraftId(null);
+    setActiveView(view);
   }
 
   // Restore the last-active tab after a page refresh instead of always
@@ -1544,7 +1564,7 @@ export default function DashboardPage() {
               className={`${styles.navItem} ${activeView === item.view ? styles.navItemActive : ""
                 }`}
               type="button"
-              onClick={() => setActiveView(item.view)}
+              onClick={() => navigateTo(item.view)}
             >
               <span>{item.label}</span>
               <span className={styles.navCount}>{item.count}</span>
@@ -1934,7 +1954,9 @@ export default function DashboardPage() {
         {activeView === "messages" && <MessagesTab />}
 
         {activeView === "rentvine" && <RentvineTab onEditLeasePdf={openLeaseTemplateDraft} />}
-        {activeView === "lease-template" && <LeaseTemplateTab initialDraftId={leaseTemplateDraftId} />}
+        {activeView === "lease-template" && (
+          <LeaseTemplateTab initialDraftId={leaseTemplateDraftId} onDirtyChange={setLeaseTemplateDirty} />
+        )}
       </section>
     </main>
   );

@@ -101,9 +101,13 @@ const TemplateBackdrop = memo(
 
 interface LeaseTemplateTabProps {
   initialDraftId?: number | null;
+  // Reports unsaved-wording-edits state up to the dashboard shell, which
+  // uses it to confirm before switching away to another tab. Full page
+  // refresh/close is instead handled directly below via `beforeunload`.
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
-export default function LeaseTemplateTab({ initialDraftId = null }: LeaseTemplateTabProps) {
+export default function LeaseTemplateTab({ initialDraftId = null, onDirtyChange }: LeaseTemplateTabProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const backdropRef = useRef<HTMLDivElement>(null);
   const variableInputRefs = useRef<Map<string, HTMLInputElement>>(new Map());
@@ -112,6 +116,23 @@ export default function LeaseTemplateTab({ initialDraftId = null }: LeaseTemplat
   const [loadError, setLoadError] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
+
+  // Snapshot of the template as last confirmed saved (on load and after a
+  // successful "Save Template") -- compared against live `template` state
+  // to know whether there are unsaved wording edits to warn about before
+  // the user navigates away. Only meaningful in the master editor: in
+  // apartment mode the body/name inputs are read-only, so this never
+  // diverges there.
+  const savedTemplateRef = useRef<{ name: string; body: string } | null>(null);
+  function applyServerTemplate(t: Template) {
+    setTemplate(t);
+    savedTemplateRef.current = { name: t.name, body: t.body };
+  }
+  const isDirty = !!(
+    template &&
+    savedTemplateRef.current &&
+    (template.name !== savedTemplateRef.current.name || template.body !== savedTemplateRef.current.body)
+  );
 
   const [draftId, setDraftId] = useState<number | null>(null);
   const [variableValues, setVariableValues] = useState<Record<string, string>>({});
@@ -148,6 +169,38 @@ export default function LeaseTemplateTab({ initialDraftId = null }: LeaseTemplat
   >(null);
   const [signingError, setSigningError] = useState("");
 
+  // Warn on a full page refresh/close while there are unsaved wording
+  // edits -- browsers ignore any custom message here and show their own
+  // generic confirmation text.
+  useEffect(() => {
+    function handleBeforeUnload(e: BeforeUnloadEvent) {
+      if (!isDirty) return;
+      e.preventDefault();
+      e.returnValue = "";
+    }
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [isDirty]);
+
+  // Same signal, reported to the dashboard shell so it can confirm before
+  // switching to a different sidebar tab (an in-app navigation that
+  // beforeunload can't see).
+  useEffect(() => {
+    onDirtyChange?.(isDirty);
+  }, [isDirty, onDirtyChange]);
+  // Clears the parent's flag once this tab unmounts (e.g. after the user
+  // confirms leaving) so a stale "dirty" state can't block later switches
+  // once this editor instance is gone. Deliberately separate from the
+  // effect above -- an unmount-only cleanup, not one that reruns on every
+  // isDirty change.
+  const onDirtyChangeRef = useRef(onDirtyChange);
+  useEffect(() => {
+    onDirtyChangeRef.current = onDirtyChange;
+  }, [onDirtyChange]);
+  useEffect(() => {
+    return () => onDirtyChangeRef.current?.(false);
+  }, []);
+
   // ── Load the template ─────────────────────────────────────────────────
   useEffect(() => {
     fetch("/api/lease-template/template")
@@ -157,7 +210,7 @@ export default function LeaseTemplateTab({ initialDraftId = null }: LeaseTemplat
           setLoadError(json.error || "Could not load the lease template.");
           return;
         }
-        setTemplate(json.template);
+        applyServerTemplate(json.template);
       })
       .catch((err) => setLoadError(err instanceof Error ? err.message : "Unexpected error."));
   }, []);
@@ -459,7 +512,7 @@ export default function LeaseTemplateTab({ initialDraftId = null }: LeaseTemplat
         setSaveMessage(json.error || "Could not save template.");
         return;
       }
-      setTemplate(json.template);
+      applyServerTemplate(json.template);
       setSaveMessage("Saved.");
     } finally {
       setSaving(false);

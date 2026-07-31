@@ -124,6 +124,12 @@
     box-sizing: border-box;
     border: 1px solid transparent;
     pointer-events: none;
+    /* Without this, Windows "forced colors" / high-contrast mode overrides
+       the textarea's intentional color:transparent below and renders its
+       real text too -- since it wraps independently of this backdrop, the
+       two text layers land at slightly different positions and look like
+       doubled/ghosted text. */
+    forced-color-adjust: none;
 }
 
 /* Both re-enable pointer-events over the click-through backdrop (see
@@ -180,6 +186,9 @@
     resize: none;
     box-sizing: border-box;
     overflow-y: auto;
+    /* See .templateTextareaBackdrop's comment -- keeps this text genuinely
+       invisible even under forced-colors/high-contrast modes. */
+    forced-color-adjust: none;
 }
 
 .editorActions {
