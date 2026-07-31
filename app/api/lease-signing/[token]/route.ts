@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase-server";
 import { getSignedDownloadUrl } from "@/lib/storage";
-import { findParticipantByToken, isParticipantExpired } from "@/lib/signing";
+import { findParticipantByToken, isParticipantExpired, findBlockingParticipant } from "@/lib/signing";
 import { logAuditEvent, getRequestMeta } from "@/lib/audit";
 import { safeErrorResponse } from "@/lib/errors";
 
@@ -69,6 +69,28 @@ export async function GET(
       return NextResponse.json({ ok: false, error: "This signing link has expired." }, { status: 410 });
     }
 
+    // Sequential signing: this participant can't proceed until everyone
+    // ahead of them (lower signing_order on the same envelope) has signed.
+    // Checked here (not just trusted client-side) so the document itself
+    // -- not just the sign action -- stays gated until it's their turn.
+    const blockingParticipant = await findBlockingParticipant(participant);
+    if (blockingParticipant) {
+      return NextResponse.json({
+        ok: true,
+        documentId: envelope.document_id,
+        role: participant.role,
+        name: participant.name,
+        email: participant.email,
+        status: "waiting_for_turn",
+        waitingForTurn: true,
+        waitingForRole: blockingParticipant.role,
+        waitingForName: blockingParticipant.name,
+        waitingOnOthers: false,
+        envelopeCompleted: false,
+        completedPdfUrl: null,
+      });
+    }
+
     if (participant.status === "sent") {
       await supabaseServer
         .from("signing_participants")
@@ -99,6 +121,7 @@ export async function GET(
       expiresAt: participant.expires_at,
       verifiedAt: participant.verified_at,
       consentedAt: participant.consented_at,
+      waitingForTurn: false,
       waitingOnOthers: false,
       envelopeCompleted: false,
       completedPdfUrl: null,

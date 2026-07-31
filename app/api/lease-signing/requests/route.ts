@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { supabaseServer } from "@/lib/supabase-server";
 import { uploadFile } from "@/lib/storage";
-import { renderTemplatePdf } from "@/lib/pdf-generation";
+import { renderCombinedLeasePdf } from "@/lib/pdf-generation";
 import { substituteVariables } from "@/lib/template-vars";
 import { sha256Hex, generateToken } from "@/lib/crypto-utils";
 import { logAuditEvent, getRequestMeta } from "@/lib/audit";
@@ -69,6 +69,20 @@ export async function POST(request: Request) {
       );
     }
 
+    // Signing order is Tenant(s) first, then Landlord, then anyone else
+    // (e.g. Witness - Property Management) -- each participant can only
+    // sign once everyone before them in this order has signed. Sorting is
+    // stable, so multiple tenants keep the relative order staff entered
+    // them in.
+    function rolePriority(role: string): number {
+      if (role === "Tenant") return 0;
+      if (role === "Landlord") return 1;
+      return 2;
+    }
+    const orderedParticipants = [...participantsInput].sort(
+      (a, b) => rolePriority(a.role) - rolePriority(b.role),
+    );
+
     const { data: template, error: templateError } = await supabaseServer
       .from("lease_templates")
       .select("name, body")
@@ -92,7 +106,10 @@ export async function POST(request: Request) {
     }
 
     const filledText = substituteVariables(template.body, valuesMap);
-    const pdfBytes = await renderTemplatePdf(filledText);
+    const pdfBytes = await renderCombinedLeasePdf(
+      filledText,
+      orderedParticipants.map((p) => ({ role: p.role, name: p.name || "" })),
+    );
     const pdfBuffer = Buffer.from(pdfBytes);
     const originalPdfHash = sha256Hex(pdfBuffer);
 
@@ -131,7 +148,7 @@ export async function POST(request: Request) {
     const origin = new URL(request.url).origin;
     const results: { role: string; name: string | null; email: string; signingUrl: string; emailSent: boolean }[] = [];
 
-    for (const p of participantsInput) {
+    for (const [signingOrder, p] of orderedParticipants.entries()) {
       const rawToken = generateToken();
       const tokenHash = sha256Hex(rawToken);
 
@@ -145,6 +162,7 @@ export async function POST(request: Request) {
           token_hash: tokenHash,
           status: "sent",
           expires_at: expiresAt,
+          signing_order: signingOrder,
         })
         .select("id")
         .single();

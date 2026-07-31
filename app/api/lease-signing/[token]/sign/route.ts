@@ -3,7 +3,7 @@ import { supabaseServer } from "@/lib/supabase-server";
 import { downloadFile, uploadFile, getSignedDownloadUrl } from "@/lib/storage";
 import { stampMultiPartyCompletedPdf, type AuditEventSummary, type ParticipantSignatureInfo } from "@/lib/pdf-generation";
 import { sha256Hex } from "@/lib/crypto-utils";
-import { findParticipantByToken, isParticipantExpired } from "@/lib/signing";
+import { findParticipantByToken, isParticipantExpired, findBlockingParticipant } from "@/lib/signing";
 import { logAuditEvent, getRequestMeta } from "@/lib/audit";
 import { isRateLimited } from "@/lib/rate-limit";
 import { sendEmail } from "@/lib/email";
@@ -67,6 +67,9 @@ export async function POST(
         { ok: false, error: "Email verification must be completed before signing." },
         { status: 400 },
       );
+    }
+    if (await findBlockingParticipant(participant)) {
+      return NextResponse.json({ ok: false, error: "It's not your turn to sign yet." }, { status: 409 });
     }
     if (!envelope.original_pdf_path || !envelope.original_pdf_hash) {
       return NextResponse.json({ ok: false, error: "No original document is attached to this request." }, { status: 400 });

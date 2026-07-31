@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase-server";
-import { renderTemplatePdf } from "@/lib/pdf-generation";
+import { renderCombinedLeasePdf } from "@/lib/pdf-generation";
 import { substituteVariables } from "@/lib/template-vars";
+import { deriveSignatureParticipants } from "@/lib/lease-draft";
 
 async function getParams(context: { params: Promise<{ id: string }> | { id: string } }) {
   return await context.params;
@@ -41,7 +42,7 @@ export async function GET(
     }
 
     const filledText = substituteVariables(template.body, valuesMap);
-    const pdfBytes = await renderTemplatePdf(filledText);
+    const pdfBytes = await renderCombinedLeasePdf(filledText, deriveSignatureParticipants(valuesMap));
     const pdfBuffer = Buffer.from(pdfBytes);
 
     // Content-Length is required for Chrome's inline PDF viewer -- without

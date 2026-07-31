@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase-server";
-import { findParticipantByToken, isParticipantExpired } from "@/lib/signing";
+import { findParticipantByToken, isParticipantExpired, findBlockingParticipant } from "@/lib/signing";
 import { generateOtpCode, sha256Hex } from "@/lib/crypto-utils";
 import { logAuditEvent, getRequestMeta } from "@/lib/audit";
 import { isRateLimited } from "@/lib/rate-limit";
@@ -38,6 +38,10 @@ export async function POST(
       envelope.status === "revoked"
     ) {
       return NextResponse.json({ ok: false, error: "This signing link is no longer active." }, { status: 410 });
+    }
+
+    if (await findBlockingParticipant(participant)) {
+      return NextResponse.json({ ok: false, error: "It's not your turn to sign yet." }, { status: 409 });
     }
 
     const { data: recent, error: recentError } = await supabaseServer

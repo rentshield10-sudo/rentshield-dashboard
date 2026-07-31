@@ -41,8 +41,8 @@ interface ParticipantFormRow {
 }
 
 const DEFAULT_PARTICIPANT_ROWS: ParticipantFormRow[] = [
-  { role: "Landlord", name: "", email: "", autoLinkedName: true },
   { role: "Tenant", name: "", email: "", autoLinkedName: true },
+  { role: "Landlord", name: "", email: "", autoLinkedName: true },
   { role: "Witness - Property Management", name: "", email: "", autoLinkedName: false },
 ];
 
@@ -220,7 +220,13 @@ export default function LeaseTemplateTab({ initialDraftId = null }: LeaseTemplat
             rows[rowIdx] = { ...rows[rowIdx], name: tenantName };
           }
         } else {
-          rows.push({ role: "Tenant", name: tenantName, email: "", autoLinkedName: true });
+          // Insert right after the last existing Tenant row (or at the
+          // front if there isn't one yet) so extra tenants stay ahead of
+          // Landlord/Witness rows -- matches the tenant1..N, landlord,
+          // witness signing order shown here and enforced server-side.
+          const lastTenantIdx = tenantRowIndexes[tenantRowIndexes.length - 1] ?? -1;
+          rows.splice(lastTenantIdx + 1, 0, { role: "Tenant", name: tenantName, email: "", autoLinkedName: true });
+          tenantRowIndexes.push(lastTenantIdx + 1);
         }
       });
 

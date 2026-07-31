@@ -12,6 +12,10 @@ const nextConfig: NextConfig = {
     "/*": [
       "./node_modules/@napi-rs/**/*",
       "./node_modules/pdfjs-dist/legacy/build/**/*",
+      // The lead-paint disclosure pamphlet is read via fs at PDF-generation
+      // time (not imported), so Next's tracer needs to be told about it
+      // explicitly or it's silently missing from the Vercel deployment.
+      "./lib/assets/**/*",
     ],
   },
   async headers() {

@@ -17,6 +17,9 @@ type Status = {
   waitingOnOthers: boolean;
   envelopeCompleted: boolean;
   completedPdfUrl: string | null;
+  waitingForTurn?: boolean;
+  waitingForRole?: string;
+  waitingForName?: string | null;
 };
 
 const CONSENT_TEXT_1 =
@@ -49,6 +52,7 @@ export default function SignRenewalPage({ params }: { params: Promise<{ token: s
   const [signError, setSignError] = useState("");
   const [completedPdfUrl, setCompletedPdfUrl] = useState<string | null>(null);
   const [waitingForOthers, setWaitingForOthers] = useState(false);
+  const [waitingForTurn, setWaitingForTurn] = useState(false);
 
   useEffect(() => {
     fetch(`/api/lease-signing/${token}`)
@@ -60,7 +64,9 @@ export default function SignRenewalPage({ params }: { params: Promise<{ token: s
         }
         setStatus(json as Status);
         setVerified(!!json.verifiedAt);
-        if (json.status === "signed") {
+        if (json.waitingForTurn) {
+          setWaitingForTurn(true);
+        } else if (json.status === "signed") {
           if (json.envelopeCompleted) {
             setCompletedPdfUrl(json.completedPdfUrl ?? null);
           } else {
@@ -180,6 +186,24 @@ export default function SignRenewalPage({ params }: { params: Promise<{ token: s
     );
   }
 
+  if (waitingForTurn) {
+    return (
+      <div className={styles.page}>
+        <div className={styles.card}>
+          <h1 className={styles.title}>Not your turn yet</h1>
+          <p>
+            This agreement is signed in order. It&apos;s currently waiting on{" "}
+            <b>{status.waitingForName || status.waitingForRole}</b>{" "}
+            {status.waitingForRole && status.waitingForName ? `(${status.waitingForRole})` : ""} to sign
+            first. You can revisit this same link at any time — it will unlock automatically once it&apos;s
+            your turn.
+          </p>
+          <p>Document ID: {status.documentId}</p>
+        </div>
+      </div>
+    );
+  }
+
   if (waitingForOthers) {
     return (
       <div className={styles.page}>
@@ -220,7 +244,7 @@ export default function SignRenewalPage({ params }: { params: Promise<{ token: s
           <p className={styles.successText}>✓ Email verified</p>
         ) : (
           <>
-            <p>We'll send a one-time code to {status.email}.</p>
+            <p>We&apos;ll send a one-time code to {status.email}.</p>
             {!otpSent ? (
               <button type="button" className={styles.primaryButton} onClick={sendCode} disabled={otpBusy}>
                 {otpBusy ? "Sending…" : "Send code"}

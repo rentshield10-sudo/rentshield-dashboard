@@ -1,4 +1,7 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
+import { readFile } from "fs/promises";
+import path from "path";
+import { renderLeaseLayoutPdf, type SignatureBlockParticipant } from "@/lib/lease-pdf-layout";
 
 const PAGE_WIDTH = 612; // US Letter, points
 const PAGE_HEIGHT = 792;
@@ -50,6 +53,31 @@ export async function renderTemplatePdf(text: string): Promise<Uint8Array> {
   }
 
   return pdfDoc.save();
+}
+
+const LEAD_PAINT_PAMPHLET_PATH = path.join(process.cwd(), "lib", "assets", "lead-paint-pamphlet.pdf");
+
+// Renders the lease with the exact-format layout engine (lib/lease-pdf-layout.tsx)
+// and appends the real EPA lead-paint disclosure pamphlet's actual pages
+// (copied as-is via pdf-lib, preserving its photos/logos exactly) as one
+// combined document -- used everywhere: Preview PDF, what's generated for
+// signing, and (since stampMultiPartyCompletedPdf below starts from these
+// same bytes) the final signed document too.
+export async function renderCombinedLeasePdf(
+  text: string,
+  participants: SignatureBlockParticipant[],
+): Promise<Uint8Array> {
+  const leaseBytes = await renderLeaseLayoutPdf(text, participants);
+  const mergedDoc = await PDFDocument.load(leaseBytes);
+
+  const pamphletBytes = await readFile(LEAD_PAINT_PAMPHLET_PATH);
+  const pamphletDoc = await PDFDocument.load(pamphletBytes);
+  const copiedPages = await mergedDoc.copyPages(pamphletDoc, pamphletDoc.getPageIndices());
+  for (const page of copiedPages) {
+    mergedDoc.addPage(page);
+  }
+
+  return mergedDoc.save();
 }
 
 const COMPANY_NAME = "ALMO Properties, LLC";

@@ -29,6 +29,7 @@ export interface ParticipantRow {
   verified_at: string | null;
   consented_at: string | null;
   signed_at: string | null;
+  signing_order: number;
   created_at: string;
   updated_at: string;
 }
@@ -67,4 +68,28 @@ export function isParticipantTerminal(p: ParticipantRow): boolean {
 
 export function isEnvelopeTerminal(e: EnvelopeRow): boolean {
   return ["completed", "expired", "revoked", "declined"].includes(e.status);
+}
+
+export interface BlockingParticipant {
+  role: string;
+  name: string | null;
+}
+
+// Signing order is Tenant(s), then Landlord, then anyone else (assigned at
+// envelope-creation time in app/api/lease-signing/requests/route.ts).
+// Returns the earliest not-yet-signed participant ahead of `p` on the same
+// envelope, or null if it's genuinely p's turn. Checked server-side on
+// every token-scoped action (not just trusted from the client) so a
+// participant can't jump the queue by hitting the API directly.
+export async function findBlockingParticipant(p: ParticipantRow): Promise<BlockingParticipant | null> {
+  const { data: earlier, error } = await supabaseServer
+    .from("signing_participants")
+    .select("role, name, status")
+    .eq("signing_request_id", p.signing_request_id)
+    .lt("signing_order", p.signing_order)
+    .order("signing_order", { ascending: true });
+  if (error) throw error;
+
+  const blocking = (earlier ?? []).find((row) => row.status !== "signed");
+  return blocking ? { role: blocking.role, name: blocking.name } : null;
 }

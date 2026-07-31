@@ -1,9 +1,30 @@
 import { supabaseServer } from "@/lib/supabase-server";
 import { getCountyForCity } from "@/lib/nj-county-lookup";
+import type { SignatureBlockParticipant } from "@/lib/lease-pdf-layout";
 
 const LANDLORD_NAME_DEFAULT = "ALMO Properties, LLC";
 const GUEST_FINE_AMOUNT_DEFAULT = "50";
 const GUEST_NOTICE_DAYS_DEFAULT = "3";
+
+// Best-effort signature-block participants derived from the draft's own
+// variable values -- used for Preview PDF and Upload to Rentvine, which
+// render before a real signing envelope (with its actual participant
+// roles/order) necessarily exists. The witness defaults to the landlord's
+// name, matching the reference lease's convention (property manager
+// witnesses their own lease).
+export function deriveSignatureParticipants(values: Record<string, string>): SignatureBlockParticipant[] {
+  const landlordName = (values.landlordName || LANDLORD_NAME_DEFAULT).trim();
+  const tenantNames = (values.tenantNames || "")
+    .split(",")
+    .map((n) => n.trim())
+    .filter(Boolean);
+
+  const participants: SignatureBlockParticipant[] = [{ role: "Landlord", name: landlordName }];
+  for (const name of tenantNames) participants.push({ role: "Tenant", name });
+  if (tenantNames.length === 0) participants.push({ role: "Tenant", name: "" });
+  participants.push({ role: "Witness - Property Management", name: landlordName });
+  return participants;
+}
 
 // Gets or creates the one persistent lease-template draft tied to a given
 // apartment_lease_details row. On first creation, pre-fills whichever

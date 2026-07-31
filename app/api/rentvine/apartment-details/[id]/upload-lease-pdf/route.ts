@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase-server";
-import { renderTemplatePdf } from "@/lib/pdf-generation";
+import { renderCombinedLeasePdf } from "@/lib/pdf-generation";
 import { substituteVariables } from "@/lib/template-vars";
 import { uploadFileToRentvineLease } from "@/lib/rentvine";
-import { getOrCreateDraftForApartment } from "@/lib/lease-draft";
+import { getOrCreateDraftForApartment, deriveSignatureParticipants } from "@/lib/lease-draft";
 
 async function getParams(context: { params: Promise<{ id: string }> | { id: string } }) {
   return await context.params;
@@ -64,7 +64,7 @@ export async function POST(
     for (const v of draftValues ?? []) valuesMap[v.variable_name] = v.value;
 
     const filledText = substituteVariables(template.body, valuesMap);
-    const pdfBytes = await renderTemplatePdf(filledText);
+    const pdfBytes = await renderCombinedLeasePdf(filledText, deriveSignatureParticipants(valuesMap));
     const pdfBuffer = Buffer.from(pdfBytes);
 
     const year = new Date().getFullYear();

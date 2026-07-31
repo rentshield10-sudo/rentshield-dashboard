@@ -9,6 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@react-pdf/renderer": "^4.5.1",
     "@supabase/supabase-js": "^2.106.2",
     "bcryptjs": "^3.0.3",
     "next": "16.2.7",
