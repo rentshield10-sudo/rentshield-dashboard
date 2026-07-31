@@ -95,8 +95,22 @@ export function SignatureBlock({
         ? landlord.map((p, i) => sigLine(p.name, `landlord-${i}`))
         : sigLine("", "landlord-0")}
 
-      <Text style={signatureStyles.sigRoleHeading}>TENANT</Text>
-      {tenants.length > 0 ? tenants.map((p, i) => sigLine(p.name, `tenant-${i}`)) : sigLine("", "tenant-0")}
+      {tenants.length > 1 ? (
+        // Numbered per tenant (TENANT 1, TENANT 2, ...) so each signer gets
+        // their own clearly labeled line instead of one shared "TENANT"
+        // heading over an unlabeled stack of Sign/Print/Date lines.
+        tenants.map((p, i) => (
+          <View key={`tenant-${i}`}>
+            <Text style={signatureStyles.sigRoleHeading}>TENANT {i + 1}</Text>
+            {sigLine(p.name, `tenant-line-${i}`)}
+          </View>
+        ))
+      ) : (
+        <>
+          <Text style={signatureStyles.sigRoleHeading}>TENANT</Text>
+          {tenants.length > 0 ? sigLine(tenants[0].name, "tenant-0") : sigLine("", "tenant-0")}
+        </>
+      )}
 
       {witnesses.map((p, i) => (
         <View key={`witness-${i}`}>
