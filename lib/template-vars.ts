@@ -1,4 +1,6 @@
-const VARIABLE_PATTERN = /\{\{(\w+)\}\}/g;
+// Allows dot-namespaced names (e.g. {{Appliance.type.1}}) in addition to
+// plain identifiers, since some variables are more readable grouped that way.
+const VARIABLE_PATTERN = /\{\{([\w.]+)\}\}/g;
 
 export function extractVariableNames(templateBody: string): string[] {
   const names = new Set<string>();

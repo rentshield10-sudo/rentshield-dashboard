@@ -39,7 +39,9 @@ const DEFAULT_PARTICIPANT_ROWS: ParticipantFormRow[] = [
   { role: "Witness - Property Management", name: "", email: "" },
 ];
 
-const VARIABLE_TOKEN_PATTERN = /\{\{(\w+)\}\}/g;
+// Kept in sync with lib/template-vars.ts's VARIABLE_PATTERN -- allows
+// dot-namespaced names (e.g. {{Appliance.type.1}}).
+const VARIABLE_TOKEN_PATTERN = /\{\{([\w.]+)\}\}/g;
 
 function escapeHtml(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
