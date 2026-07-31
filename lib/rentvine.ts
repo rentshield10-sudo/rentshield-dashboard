@@ -163,6 +163,7 @@ export async function fetchRentvineRenewals(): Promise<RenewalRow[]> {
 export interface ApartmentDetailRow {
   address: string;
   unit: string;
+  city: string;
   tenantName: string;
   activation1: string;
   expiration1: string;
@@ -175,6 +176,26 @@ export interface ApartmentDetailRow {
   rentvineUnitId: string;
   rentvineLeaseRenewalId: string;
   isActive: boolean;
+  leaseStatus: string;
+}
+
+// Maps Rentvine's own (granular, account-configurable) lease status names
+// down to the dashboard's fixed 7-option dropdown
+// (Active/Month to Month/Notice/Pending Move-In/Pending Move-Out/Eviction/
+// Past), confirmed against the real status list via GET /leases/statuses:
+// Pending, Active, Active - Notice Given, Active - Vacated,
+// Active - Evicting, Closed, Closed - Moved Out, Closed - Evicted,
+// Closed - Lease Broken. isMonthToMonth is a separate flag on the lease
+// itself, not part of the status, so it's applied on top of "Active".
+function mapRentvineLeaseStatus(rawStatusName: string, isMonthToMonth: boolean): string {
+  const name = rawStatusName.toLowerCase();
+  if (name.startsWith("closed")) return "Past";
+  if (name.includes("evicting")) return "Eviction";
+  if (name.includes("notice given")) return "Notice";
+  if (name.includes("vacated")) return "Pending Move-Out";
+  if (name === "pending") return "Pending Move-In";
+  if (name === "active") return isMonthToMonth ? "Month to Month" : "Active";
+  return rawStatusName;
 }
 
 const APARTMENT_FETCH_MAX_PAGES = 50;
@@ -197,6 +218,56 @@ async function fetchAllLeasesPaginated(
   return allLeases;
 }
 
+// Runs `fn` over `items` with at most `limit` in flight at once -- Rentvine
+// has no documented rate limit, but past testing saw an HTML error page
+// under rapid concurrent requests, so this stays conservative.
+async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < items.length) {
+      const i = nextIndex++;
+      results[i] = await fn(items[i]);
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+// Rentvine has no simple "current rent" field -- unit.rent is a static
+// placeholder (confirmed live: nearly every unit in this account shows
+// exactly 1500.00 or 1700.00 regardless of the tenant's real rent, which
+// ranges from ~$780 to $5300 per actual recurring-charge data). The real
+// current rent is the lease's recurring charge(s) flagged isRent=1 on the
+// linked account, same flag used by findRentvineRentCharge below -- summed
+// here since some leases split rent across multiple isRent charges (e.g. a
+// Section 8 lease with separate "Government Assistance Rent" + "Rent
+// Income" charges that together make up the total).
+async function fetchLeaseCurrentRent(baseUrl: string, auth: string, leaseId: string): Promise<number | null> {
+  try {
+    const data = (await rentvineGet(baseUrl, `/leases/${leaseId}/recurring-charges`, auth)) as unknown;
+    const items = Array.isArray(data) ? (data as Record<string, unknown>[]) : [];
+    let total = 0;
+    let found = false;
+    for (const item of items) {
+      const charge = item.recurringCharge as Record<string, unknown>;
+      const account = item.account as Record<string, unknown>;
+      if (String(account?.isRent ?? "") === "1") {
+        const amount = Number(charge?.amount ?? 0);
+        if (Number.isFinite(amount)) {
+          total += amount;
+          found = true;
+        }
+      }
+    }
+    return found ? total : null;
+  } catch {
+    return null; // best-effort; falls back to unit.rent below
+  }
+}
+
 export async function fetchAllApartmentDetails(): Promise<ApartmentDetailRow[]> {
   const accountCode = process.env.RENTVINE_ACC_CODE;
   const apiKey = process.env.RENTVINE_ACC_KEY;
@@ -215,9 +286,10 @@ export async function fetchAllApartmentDetails(): Promise<ApartmentDetailRow[]> 
   const auth = getBasicAuth(apiKey!, apiSecret!);
   const baseUrl = `https://${normalizeHost(accountCode!)}/api/manager`;
 
-  const [allLeases, renewalsData] = await Promise.all([
+  const [allLeases, renewalsData, statusesData] = await Promise.all([
     fetchAllLeasesPaginated(baseUrl, auth),
     rentvineGet(baseUrl, "/leases/renewals?per-page=100", auth),
+    rentvineGet(baseUrl, "/leases/statuses", auth).catch(() => []), // status names are best-effort
   ]);
 
   const formalRenewals = (
@@ -236,21 +308,40 @@ export async function fetchAllApartmentDetails(): Promise<ApartmentDetailRow[]> 
     if (leaseId) renewalByLeaseId.set(leaseId, renewal);
   }
 
+  const statusNameById = new Map<string, string>();
+  for (const item of (Array.isArray(statusesData) ? statusesData : []) as Record<string, unknown>[]) {
+    const status = item.leaseStatus as Record<string, unknown>;
+    const id = String(status?.leaseStatusID ?? "");
+    if (id) statusNameById.set(id, String(status?.name ?? ""));
+  }
+
+  const leaseIds = allLeases
+    .map((item) => String((item.lease as Record<string, unknown>)?.leaseID ?? ""))
+    .filter(Boolean);
+  const rentResults = await mapWithConcurrency(leaseIds, 5, (leaseId) =>
+    fetchLeaseCurrentRent(baseUrl, auth, leaseId),
+  );
+  const currentRentByLeaseId = new Map<string, number | null>();
+  leaseIds.forEach((leaseId, i) => currentRentByLeaseId.set(leaseId, rentResults[i]));
+
   return allLeases.map((item) => {
     const lease = item.lease as Record<string, unknown>;
     const unit = item.unit as Record<string, unknown>;
     const leaseId = String(lease?.leaseID ?? "");
     const renewal = renewalByLeaseId.get(leaseId);
+    const rawStatusName = statusNameById.get(String(lease?.leaseStatusID ?? "")) ?? "";
+    const realRent = currentRentByLeaseId.get(leaseId);
 
     return {
       address: String(unit?.address ?? ""),
       unit: String(unit?.address2 ?? ""),
+      city: String(unit?.city ?? ""),
       tenantName: ((lease?.tenants as string[]) ?? []).join(", "),
       activation1: String(renewal?.previousStartDate ?? lease?.startDate ?? ""),
       expiration1: String(renewal?.previousEndDate ?? lease?.endDate ?? ""),
       activation2: String(renewal?.startDate ?? ""),
       expiration2: String(renewal?.endDate ?? ""),
-      currentRent: String(unit?.rent ?? ""),
+      currentRent: realRent != null ? String(realRent) : String(unit?.rent ?? ""),
       securityDeposit: String(unit?.deposit ?? ""),
       notes: String(unit?.leaseNotes ?? ""),
       rentvineLeaseId: leaseId,
@@ -262,6 +353,9 @@ export async function fetchAllApartmentDetails(): Promise<ApartmentDetailRow[]> 
       // current tenant) sharing the same (address, unit) — isActive lets the
       // sync route prefer the current lease over a closed one when deduping.
       isActive: String(lease?.leaseStatusID ?? "") === "2",
+      leaseStatus: rawStatusName
+        ? mapRentvineLeaseStatus(rawStatusName, String(lease?.isMonthToMonth ?? "") === "1")
+        : "",
     };
   });
 }
@@ -522,4 +616,186 @@ export async function updateRentvineLeaseFields(
   }
 
   return json;
+}
+
+// ---------------------------------------------------------------------------
+// Lease PDF detection ("does this lease already have a document in
+// Rentvine?") and upload
+// ---------------------------------------------------------------------------
+//
+// Rentvine's public Manager API only documents POST /files (upload) — there
+// is no documented GET, and the undocumented GET that exists ignores every
+// objectID/objectTypeID filter combination tested (confirmed live: a real
+// lease ID, a bogus ID, and no filter at all all return the same
+// account-wide "most recent files" list). The only way to know whether a
+// specific lease has a PDF is to page through that full account-wide list
+// once and match by filename against the address — confirmed working
+// against a real file ("44 Thomas Street, Bloomfield, NJ - 1R - Lease
+// Agreement 2026.pdf"). This is a heuristic, not a guaranteed link, so it's
+// paired with a manual override column in Supabase for anything it misses.
+
+export interface RentvineFileSummary {
+  fileId: string;
+  title: string;
+  dateCreated: string;
+}
+
+const FILES_FETCH_MAX_PAGES = 50;
+
+export async function fetchAllRentvineFiles(): Promise<RentvineFileSummary[]> {
+  const accountCode = process.env.RENTVINE_ACC_CODE;
+  const apiKey = process.env.RENTVINE_ACC_KEY;
+  const apiSecret = process.env.RENTVINE_ACC_SECRET;
+
+  const missing = [
+    !accountCode && "RENTVINE_ACC_CODE",
+    !apiKey && "RENTVINE_ACC_KEY",
+    !apiSecret && "RENTVINE_ACC_SECRET",
+  ].filter(Boolean);
+
+  if (missing.length > 0) {
+    throw new Error(`Missing env vars: ${missing.join(", ")}`);
+  }
+
+  const auth = getBasicAuth(apiKey!, apiSecret!);
+  const baseUrl = `https://${normalizeHost(accountCode!)}/api/manager`;
+
+  const files: RentvineFileSummary[] = [];
+  let page = 1;
+
+  while (page <= FILES_FETCH_MAX_PAGES) {
+    const pageData = (await rentvineGet(baseUrl, `/files?page=${page}&per-page=50`, auth)) as unknown;
+    const items = Array.isArray(pageData) ? (pageData as Record<string, unknown>[]) : [];
+    if (items.length === 0) break;
+    for (const item of items) {
+      const file = item.file as Record<string, unknown>;
+      if (!file) continue;
+      files.push({
+        fileId: String(file.fileID ?? ""),
+        title: String(file.title ?? ""),
+        dateCreated: String(file.dateTimeCreated ?? ""),
+      });
+    }
+    page += 1;
+  }
+
+  return files;
+}
+
+// Requires the title to contain the street address and the word "lease" --
+// an address-only match produces false positives (e.g. a vendor invoice
+// titled "...invoice_44_Thomas_Bloomfield.pdf" matched on address alone
+// during testing). Rentvine's own file-naming convention, confirmed against
+// a real upload, is "{address}, {city}, {state} - {unit} - Lease Agreement
+// {year}.pdf" -- so when a unit is given, it's also required in the title.
+// Without that, a multi-unit building's single uploaded lease matches every
+// unit at that address (confirmed live: 44 Thomas Street's one PDF for unit
+// 1R matched all four units before this check was added).
+export function matchLeasePdfFile(
+  files: RentvineFileSummary[],
+  address: string,
+  unit?: string,
+): RentvineFileSummary | null {
+  const normalizedAddress = address.trim().toLowerCase();
+  if (!normalizedAddress) return null;
+  const normalizedUnit = unit?.trim().toLowerCase() ?? "";
+
+  for (const file of files) {
+    const title = file.title.toLowerCase();
+    if (!title.includes(normalizedAddress) || !title.includes("lease")) continue;
+    if (normalizedUnit && !title.includes(normalizedUnit)) continue;
+    return file;
+  }
+  return null;
+}
+
+export async function uploadFileToRentvineLease(
+  leaseId: string,
+  fileBuffer: Buffer,
+  fileName: string,
+): Promise<{ fileId: string }> {
+  const accountCode = process.env.RENTVINE_ACC_CODE;
+  const apiKey = process.env.RENTVINE_ACC_KEY;
+  const apiSecret = process.env.RENTVINE_ACC_SECRET;
+
+  const missing = [
+    !accountCode && "RENTVINE_ACC_CODE",
+    !apiKey && "RENTVINE_ACC_KEY",
+    !apiSecret && "RENTVINE_ACC_SECRET",
+  ].filter(Boolean);
+
+  if (missing.length > 0) {
+    throw new Error(`Missing env vars: ${missing.join(", ")}`);
+  }
+
+  const auth = getBasicAuth(apiKey!, apiSecret!);
+  const baseUrl = `https://${normalizeHost(accountCode!)}/api/manager`;
+
+  // objectTypeID 4 = Lease, per Rentvine's Object Types table.
+  const form = new FormData();
+  form.append("file", new Blob([new Uint8Array(fileBuffer)], { type: "application/pdf" }), fileName);
+
+  const res = await fetch(`${baseUrl}/files?objectTypeID=4&objectID=${leaseId}`, {
+    method: "POST",
+    headers: { Authorization: `Basic ${auth}`, Accept: "application/json" },
+    body: form,
+  });
+
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`Rentvine POST /files → ${res.status} ${res.statusText}: ${text}`);
+  }
+
+  let json: Record<string, unknown>;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error(`Rentvine POST /files returned non-JSON response: ${text}`);
+  }
+
+  // Rentvine's own spec documents a required top-level "file" object, but
+  // the live response for this account instead came back as
+  // { fileAttachment: { fileID, ... } } with no "file" key at all --
+  // confirmed live. Check both shapes rather than trusting the spec.
+  const file = json.file as Record<string, unknown> | undefined;
+  const fileAttachment = json.fileAttachment as Record<string, unknown> | undefined;
+  const fileId = String(file?.fileID ?? fileAttachment?.fileID ?? "");
+  if (!fileId) {
+    throw new Error(`Rentvine POST /files response missing a recognizable fileID: ${text}`);
+  }
+
+  return { fileId };
+}
+
+// Confirmed live: GET /files/{id}/download returns the raw PDF bytes
+// (unlike the broken GET /files listing endpoint, this one actually works
+// as documented-by-convention, even though it isn't in the published spec).
+export async function downloadRentvineFile(fileId: string): Promise<{ buffer: Buffer; contentType: string }> {
+  const accountCode = process.env.RENTVINE_ACC_CODE;
+  const apiKey = process.env.RENTVINE_ACC_KEY;
+  const apiSecret = process.env.RENTVINE_ACC_SECRET;
+
+  const missing = [
+    !accountCode && "RENTVINE_ACC_CODE",
+    !apiKey && "RENTVINE_ACC_KEY",
+    !apiSecret && "RENTVINE_ACC_SECRET",
+  ].filter(Boolean);
+
+  if (missing.length > 0) {
+    throw new Error(`Missing env vars: ${missing.join(", ")}`);
+  }
+
+  const auth = getBasicAuth(apiKey!, apiSecret!);
+  const baseUrl = `https://${normalizeHost(accountCode!)}/api/manager`;
+
+  const res = await fetch(`${baseUrl}/files/${fileId}/download`, {
+    headers: { Authorization: `Basic ${auth}` },
+  });
+
+  if (!res.ok) {
+    throw new Error(`Rentvine GET /files/${fileId}/download → ${res.status} ${res.statusText}`);
+  }
+
+  const buffer = Buffer.from(await res.arrayBuffer());
+  return { buffer, contentType: res.headers.get("content-type") || "application/pdf" };
 }
